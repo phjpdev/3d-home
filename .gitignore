@@ -47,6 +47,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# 3D models (often large binaries; distribute separately or via CDN/LFS if needed)
+*.glb
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
