@@ -1,10 +1,9 @@
 "use client";
 
-/* eslint-disable react-hooks/immutability -- imperative Three.js camera / canvas DOM updates inside R3F */
-
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
+
 import type { DoorstepPose } from "@/lib/doorstepPose";
 
 const CURSOR_WALK = 'url("/walk-cursor.svg") 16 18, pointer';
@@ -15,17 +14,79 @@ const CLICK_STEP_CAP = 1.85;
 const KEY_STEP = 0.68;
 const KEY_TRANSIT_MS = 640;
 
+export type SurfacePolicy = {
+  walkStrict: boolean;
+  walkWhitelistUuids: ReadonlySet<string>;
+  occluderUuids: ReadonlySet<string>;
+  furnitureUuids: ReadonlySet<string>;
+};
+
+function placementAllowed(hit: THREE.Intersection, policy: SurfacePolicy): boolean {
+  if (!policy.walkStrict) return true;
+  if (!hit.object.visible) return false;
+  const obj = hit.object as THREE.Mesh;
+  if (!obj.isMesh) return false;
+  const uuid = obj.uuid;
+
+  const { walkWhitelistUuids, furnitureUuids } = policy;
+  if (walkWhitelistUuids.size > 0) return walkWhitelistUuids.has(uuid);
+
+  return !furnitureUuids.has(uuid);
+}
+
+function ancestorHasUuid(
+  start: THREE.Object3D | null,
+  set: ReadonlySet<string>,
+): boolean {
+  let o = start as THREE.Object3D | null;
+  while (o) {
+    if (set.has(o.uuid)) return true;
+    o = o.parent;
+  }
+  return false;
+}
+
+/**
+ * Torso-high horizontal ray finds occluders (walls/partitions) before we reach destination.
+ */
+function horizontalClearTowardDest(
+  sceneRoot: THREE.Object3D,
+  occluders: ReadonlySet<string>,
+  caster: THREE.Raycaster,
+  fromEye: THREE.Vector3,
+  dest: THREE.Vector3,
+): boolean {
+  if (occluders.size === 0) return true;
+  const dx = dest.x - fromEye.x;
+  const dz = dest.z - fromEye.z;
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-4) return true;
+  const dir = new THREE.Vector3(dx / len, 0, dz / len);
+  const torso = new THREE.Vector3(fromEye.x, fromEye.y - 0.42, fromEye.z);
+  caster.set(torso, dir);
+  const hits = caster.intersectObject(sceneRoot, true);
+  const limit = len + 0.12;
+  for (const h of hits) {
+    if (h.distance > limit) break;
+    if (!h.object.visible) continue;
+    if (ancestorHasUuid(h.object, occluders)) return false;
+  }
+  return true;
+}
+
 function pickWalkableFloorHit(
   hits: THREE.Intersection[],
-  camPos: THREE.Vector3,
+  refPos: THREE.Vector3,
   floorMinY: number,
   floorMaxY: number,
-  maxStep: number,
+  maxHoriz: number,
+  policy: SurfacePolicy,
 ): THREE.Intersection | null {
   for (const h of hits) {
     if (!h.face) continue;
     const obj = h.object as THREE.Mesh;
     if (!obj.visible) continue;
+    if (!placementAllowed(h, policy)) continue;
 
     const n = h.face.normal
       .clone()
@@ -35,21 +96,44 @@ function pickWalkableFloorHit(
     const pt = h.point;
     if (pt.y < floorMinY || pt.y > floorMaxY) continue;
 
-    const dx = pt.x - camPos.x;
-    const dz = pt.z - camPos.z;
+    const dx = pt.x - refPos.x;
+    const dz = pt.z - refPos.z;
     const horiz = Math.hypot(dx, dz);
-    if (horiz > maxStep) continue;
+    if (horiz > maxHoriz) continue;
 
     return h;
   }
   return null;
 }
 
+function canStandAtPosition(
+  sceneRoot: THREE.Object3D,
+  caster: THREE.Raycaster,
+  dest: THREE.Vector3,
+  eyeY: number,
+  floorMinY: number,
+  floorMaxY: number,
+  policy: SurfacePolicy,
+): boolean {
+  const origin = new THREE.Vector3(dest.x, eyeY + 2.2, dest.z);
+  caster.set(origin, new THREE.Vector3(0, -1, 0));
+  const hits = caster.intersectObject(sceneRoot, true);
+  const hit = pickWalkableFloorHit(
+    hits,
+    dest,
+    floorMinY,
+    floorMaxY,
+    0.65,
+    policy,
+  );
+  if (!hit) return false;
+  return Math.abs(hit.point.y - eyeY) < 0.62;
+}
+
 function easeInOutCubic(t: number) {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
 }
 
-/** Shortest signed rotation from `from` toward `to` in radians (for yaw). */
 function shortestYawDelta(from: number, to: number): number {
   let d = to - from;
   while (d > Math.PI) d -= Math.PI * 2;
@@ -69,11 +153,19 @@ type Transit = {
 export type FloorWalkControlsProps = {
   sceneRoot: THREE.Object3D;
   doorstepPose: DoorstepPose;
+  walkStrict?: boolean;
+  walkWhitelistUuids?: ReadonlySet<string>;
+  occluderUuids?: ReadonlySet<string>;
+  furnitureUuids?: ReadonlySet<string>;
 };
 
 export function FloorWalkControls({
   sceneRoot,
   doorstepPose,
+  walkStrict = false,
+  walkWhitelistUuids = new Set(),
+  occluderUuids = new Set(),
+  furnitureUuids = new Set(),
 }: FloorWalkControlsProps) {
   const { camera, gl } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
@@ -89,27 +181,92 @@ export function FloorWalkControls({
   const DRAG_PX = 10;
 
   const sizeVec = doorstepPose.bbox.getSize(new THREE.Vector3());
-  const diagonal = sizeVec.length();
-  const maxStep = Math.min(Math.max(diagonal * 0.28, 5), 18);
-  /** Porch deck and interior floors (often below `porchFloorY`). */
+  const maxStep = Math.min(Math.max(sizeVec.length() * 0.28, 5), 18);
+
   const floorMinY = doorstepPose.bbox.min.y - 0.12;
   const floorMaxY =
     doorstepPose.bbox.min.y + Math.min(sizeVec.y * 0.42, 12);
 
-  const tryPickHover = (): boolean => {
+  const policyRef = useRef<SurfacePolicy>({
+    walkStrict,
+    walkWhitelistUuids,
+    occluderUuids,
+    furnitureUuids,
+  });
+
+  policyRef.current = {
+    walkStrict,
+    walkWhitelistUuids,
+    occluderUuids,
+    furnitureUuids,
+  };
+
+  const tryPickHoverLocal = (): boolean => {
+    const policy = policyRef.current;
     raycaster.current.setFromCamera(pointer.current, camera);
     const hits = raycaster.current.intersectObject(sceneRoot, true);
-    const camPos = camera.position;
 
     const hit = pickWalkableFloorHit(
       hits,
-      camPos,
+      camera.position,
       floorMinY,
       floorMaxY,
       maxStep,
+      policy,
     );
     return hit !== null;
   };
+
+  const tryCommitMove = useCallback(
+    (dest: THREE.Vector3, endYaw: number, durationMs: number) => {
+      const policy = policyRef.current;
+      const camPos = camera.position;
+      if (!policy.walkStrict) {
+        transit.current = {
+          from: camPos.clone(),
+          to: dest,
+          startYaw: yaw.current,
+          endYaw,
+          t0: performance.now(),
+          durationMs,
+        };
+        return;
+      }
+      if (
+        !horizontalClearTowardDest(
+          sceneRoot,
+          policy.occluderUuids,
+          raycaster.current,
+          camPos,
+          dest,
+        )
+      ) {
+        return;
+      }
+      if (
+        !canStandAtPosition(
+          sceneRoot,
+          raycaster.current,
+          dest,
+          camPos.y,
+          floorMinY,
+          floorMaxY,
+          policy,
+        )
+      ) {
+        return;
+      }
+      transit.current = {
+        from: camPos.clone(),
+        to: dest,
+        startYaw: yaw.current,
+        endYaw,
+        t0: performance.now(),
+        durationMs,
+      };
+    },
+    [camera, sceneRoot, floorMinY, floorMaxY],
+  );
 
   useLayoutEffect(() => {
     const p = camera as THREE.PerspectiveCamera;
@@ -195,13 +352,13 @@ export function FloorWalkControls({
       raycaster.current.setFromCamera(pointer.current, camera);
       const hits = raycaster.current.intersectObject(sceneRoot, true);
       const camPos = camera.position;
-
       const hit = pickWalkableFloorHit(
         hits,
         camPos,
         floorMinY,
         floorMaxY,
         maxStep,
+        policyRef.current,
       );
       if (!hit?.face) return;
 
@@ -220,20 +377,9 @@ export function FloorWalkControls({
         camPos.z + flatDir.z * step,
       );
 
-      /**
-       * Match PerspectiveCamera YXZ yaw: horizontal look dir is (-sin(y), -cos(y)) in XZ.
-       * Do not use Object3D.lookAt + Euler — it can disagree by π with the camera and flip you around.
-       */
       const endYaw = Math.atan2(-flatDir.x, -flatDir.z);
 
-      transit.current = {
-        from: camPos.clone(),
-        to: dest,
-        startYaw: yaw.current,
-        endYaw,
-        t0: performance.now(),
-        durationMs: Math.min(1650, 780 + step * 380),
-      };
+      tryCommitMove(dest, endYaw, Math.min(1650, 780 + step * 380));
     };
 
     const onCancel = (e: PointerEvent) => {
@@ -258,7 +404,15 @@ export function FloorWalkControls({
       el.removeEventListener("pointercancel", onCancel);
       el.style.cursor = "";
     };
-  }, [camera, gl.domElement, sceneRoot, floorMinY, floorMaxY, maxStep]);
+  }, [
+    camera,
+    gl.domElement,
+    sceneRoot,
+    floorMinY,
+    floorMaxY,
+    maxStep,
+    tryCommitMove,
+  ]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -290,19 +444,12 @@ export function FloorWalkControls({
       const dest = camPos.clone().addScaledVector(dir, KEY_STEP);
       dest.y = camPos.y;
 
-      transit.current = {
-        from: camPos.clone(),
-        to: dest,
-        startYaw: yaw.current,
-        endYaw: yaw.current,
-        t0: performance.now(),
-        durationMs: KEY_TRANSIT_MS,
-      };
+      tryCommitMove(dest, yaw.current, KEY_TRANSIT_MS);
     };
 
     window.addEventListener("keydown", onKeyDown, { passive: false });
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [camera]);
+  }, [camera, tryCommitMove]);
 
   useFrame(() => {
     const tr = transit.current;
@@ -334,7 +481,7 @@ export function FloorWalkControls({
       return;
     }
 
-    const hovering = !dragging.current && tryPickHover();
+    const hovering = !dragging.current && tryPickHoverLocal();
 
     gl.domElement.style.cursor = hovering ? CURSOR_WALK : "";
 

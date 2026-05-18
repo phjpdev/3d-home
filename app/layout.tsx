@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Crimson_Pro, Geist, Geist_Mono } from "next/font/google";
+import SiteChrome from "@/components/SiteChrome";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,9 +13,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const museumSerif = Crimson_Pro({
+  variable: "--font-museum-serif",
+  subsets: ["latin"],
+  weight: ["400", "600"],
+});
+
 export const metadata: Metadata = {
-  title: "House GLB viewer",
-  description: "Three.js viewer for house2test.glb",
+  title: "Einstein House · 3D",
+  description:
+    "A period-room digital house: compose objects, stroll the parquet, generate models.",
 };
 
 export default function RootLayout({
@@ -25,9 +33,11 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${museumSerif.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="flex min-h-full min-h-[100dvh] flex-col">
+        <SiteChrome>{children}</SiteChrome>
+      </body>
     </html>
   );
 }

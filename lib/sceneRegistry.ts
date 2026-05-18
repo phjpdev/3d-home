@@ -1,3 +1,8 @@
+export type SlotInfo = {
+  id: string;
+  label: string;
+};
+
 export type SceneRegistry = {
-  slotIds: string[];
+  slots: SlotInfo[];
 };

@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    /** Bundled/reference Next app dropped in repo root */
+    "3d-house/**",
   ]),
 ]);
 

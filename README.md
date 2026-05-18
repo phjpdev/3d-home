@@ -1,6 +1,15 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+This is a Next.js App Router demo: an “Einstein house” foyer with Meshy‑backed generation, an edit canvas for placing GLBs, and a strict walk mode.
+
+### Meshy API
+
+Put your Meshy key in `.env.local` as `MESHY_API_KEY` (see [.env.example](.env.example)). Route handlers under `app/api/meshy/**` relay requests so the key never reaches the browser. Generated GLBs on `*.meshy.ai` are streamed through `/api/models/proxy` so the viewer can load them same-origin.
+
+### Reference folder
+
+If you keep a **`3d-house/`** vendor or sample tree in this repo root, TypeScript excludes it (`tsconfig.json`) so Next’s checker only sees this app.
 
 ## Getting Started
+
 
 First, run the development server:
 

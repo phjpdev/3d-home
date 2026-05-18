@@ -4,17 +4,23 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, useProgress } from "@react-three/drei";
 import * as THREE from "three";
+
 import type { ResolvedWaypoint } from "@/data/waypoints";
-import type { SceneRegistry } from "@/lib/sceneRegistry";
+import type { SceneAnnotationMaps } from "@/lib/houseSceneAnnotate";
 import { computeDoorstepPose } from "@/lib/doorstepPose";
+import { EMPTY_UUID_SET } from "@/lib/emptyUuidSet";
+import type { SceneRegistry } from "@/lib/sceneRegistry";
 import { DoorstepCamera } from "./DoorstepCamera";
 import { FloorWalkControls } from "./FloorWalkControls";
+import { FurniturePlacements } from "./FurniturePlacements";
 import { HouseModel } from "./HouseModel";
+import { WallPicture } from "./WallPicture";
 
 export type HouseViewMode = "overview" | "walk";
 
 export type HouseViewerProps = {
   viewMode?: HouseViewMode;
+  walkStrict?: boolean;
   furnitureAssignments?: Record<string, string>;
   wallImageSrc?: string | null;
   currentWaypointId?: string;
@@ -40,10 +46,25 @@ function LoadingReporter({
 
 export default function HouseViewer({
   viewMode = "overview",
+  walkStrict = false,
+  furnitureAssignments = {},
+  wallImageSrc = null,
   onWaypointMap,
   onRegistry,
 }: HouseViewerProps = {}) {
   const [sceneRoot, setSceneRoot] = useState<THREE.Object3D | null>(null);
+  const [anchors, setAnchors] = useState<Map<string, THREE.Object3D>>(
+    () => new Map(),
+  );
+
+  type WalkSets = {
+    walk: ReadonlySet<string>;
+    occluder: ReadonlySet<string>;
+    furniture: ReadonlySet<string>;
+  };
+
+  const [walkSets, setWalkSets] = useState<WalkSets | null>(null);
+
   const [cameraReady, setCameraReady] = useState(false);
   const [loadProgress, setLoadProgress] = useState({
     active: true,
@@ -80,11 +101,22 @@ export default function HouseViewer({
     };
   }, [viewMode, sceneRoot, loadProgress.active]);
 
+  const handleAnnotations = useCallback(
+    (maps: SceneAnnotationMaps) => {
+      setAnchors(new Map(maps.anchors));
+      setWalkSets({
+        walk: maps.walkableMeshUuids,
+        occluder: maps.occluderMeshUuids,
+        furniture: maps.furnitureMeshUuids,
+      });
+      onRegistry?.({ registry: maps.registry });
+    },
+    [onRegistry],
+  );
+
   useEffect(() => {
-    if (!sceneRoot) return;
     onWaypointMap?.(new Map());
-    onRegistry?.({ registry: { slotIds: [] } });
-  }, [sceneRoot, onWaypointMap, onRegistry]);
+  }, [sceneRoot, onWaypointMap]);
 
   const showLoadingOverlay = !(
     sceneRoot !== null &&
@@ -94,19 +126,23 @@ export default function HouseViewer({
 
   const pct = Math.round(loadProgress.progress);
 
+  const walkWhitelistStable = walkSets?.walk ?? EMPTY_UUID_SET;
+  const occluderStable = walkSets?.occluder ?? EMPTY_UUID_SET;
+  const furnitureStable = walkSets?.furniture ?? EMPTY_UUID_SET;
+
   return (
-    <div className="relative h-full w-full">
+    <div className="relative h-full w-full bg-[var(--museum-parchment)]">
       {showLoadingOverlay ? (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-zinc-50/95 text-center backdrop-blur-sm dark:bg-zinc-950/95">
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--museum-paper)]/92 text-center backdrop-blur-sm">
           <div
             aria-hidden
-            className="h-10 w-10 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700 dark:border-zinc-700 dark:border-t-zinc-300"
+            className="h-10 w-10 animate-spin rounded-full border-2 border-black/15 border-t-[var(--museum-brass)]"
           />
           <div className="px-6">
-            <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
-              Loading house…
+            <p className="museum-sans text-sm font-medium text-[var(--museum-ink)]">
+              Unveiling floors…
             </p>
-            <p className="mt-1 tabular-nums text-xs text-zinc-500 dark:text-zinc-400">
+            <p className="museum-sans mt-1 tabular-nums text-xs text-[var(--museum-muted)]">
               {pct}%
             </p>
           </div>
@@ -114,18 +150,18 @@ export default function HouseViewer({
       ) : null}
 
       <Canvas
-        className="h-full w-full touch-none"
+        className="museum-sans h-full w-full touch-none"
         camera={{ position: [0, 1.6, 6], fov: 45 }}
         gl={{ antialias: true, alpha: false }}
         onCreated={(state) => {
-          state.gl.setClearColor(0xffffff);
-          state.scene.background = new THREE.Color(0xffffff);
+          state.gl.setClearColor(0xfbf8f2);
+          state.scene.background = new THREE.Color(0xfbf8f2);
         }}
         resize={{ scroll: false }}
       >
-        <color attach="background" args={["#ffffff"]} />
-        <ambientLight intensity={0.55} />
-        <directionalLight intensity={1.05} position={[12, 18, 10]} />
+        <color attach="background" args={["#fbf8f2"]} />
+        <ambientLight intensity={0.62} />
+        <directionalLight intensity={1.08} position={[14, 20, 12]} />
 
         <LoadingReporter onChange={handleLoadingChange} />
 
@@ -141,15 +177,35 @@ export default function HouseViewer({
         />
 
         <Suspense fallback={null}>
-          <HouseModel onSceneAvailable={setSceneRoot} />
+          <HouseModel
+            onSceneAvailable={setSceneRoot}
+            onAnnotations={handleAnnotations}
+          />
         </Suspense>
 
+        <FurniturePlacements
+          anchors={anchors}
+          assignments={furnitureAssignments}
+        />
+
+        <WallPicture scene={sceneRoot} imageSrc={wallImageSrc} />
+
         {viewMode === "overview" ? (
-          <DoorstepCamera scene={sceneRoot} onPositioned={handleCameraPositioned} />
+          <DoorstepCamera
+            scene={sceneRoot}
+            onPositioned={handleCameraPositioned}
+          />
         ) : null}
 
         {viewMode === "walk" && sceneRoot && doorstepPose ? (
-          <FloorWalkControls sceneRoot={sceneRoot} doorstepPose={doorstepPose} />
+          <FloorWalkControls
+            sceneRoot={sceneRoot}
+            doorstepPose={doorstepPose}
+            walkStrict={walkStrict}
+            walkWhitelistUuids={walkWhitelistStable}
+            occluderUuids={occluderStable}
+            furnitureUuids={furnitureStable}
+          />
         ) : null}
       </Canvas>
     </div>

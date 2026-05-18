@@ -1,26 +1,96 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --museum-paper: #f7f4ed;
+  --museum-parchment: #fbf8f2;
+  --museum-ink: #1c1914;
+  --museum-ink-soft: #353129;
+  --museum-muted: #6b6560;
+  --museum-rule: rgba(44, 40, 33, 0.12);
+  --museum-brass: #b08d57;
+  --museum-brass-dark: #8a6b3f;
+  --museum-grain-opacity: 0.045;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-background: var(--museum-paper);
+  --color-foreground: var(--museum-ink);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-museum-serif), ui-serif, Georgia, serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--museum-paper);
+  color: var(--museum-ink);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+.museum-serif {
+  font-family: var(--font-museum-serif), ui-serif, Georgia, serif;
+}
+
+.museum-sans {
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Subtle parchment grain — CSS only */
+body::before {
+  content: "";
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  opacity: var(--museum-grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+
+.museum-btn-primary {
+  border: 1px solid var(--museum-brass-dark);
+  background: linear-gradient(
+    to bottom,
+    var(--museum-brass) 0%,
+    var(--museum-brass-dark) 100%
+  );
+  color: #fffdf8;
+  font-weight: 600;
+}
+
+.museum-btn-primary:hover {
+  filter: brightness(1.06);
+}
+
+.museum-btn-primary:focus-visible {
+  outline: 2px solid var(--museum-brass);
+  outline-offset: 2px;
+}
+
+.museum-btn-secondary {
+  border: 1px solid var(--museum-rule);
+  background: transparent;
+  color: var(--museum-ink);
+  font-weight: 600;
+}
+
+.museum-btn-secondary:hover {
+  background: rgba(0, 0, 0, 0.035);
+}
+
+.museum-btn-secondary:focus-visible {
+  outline: 2px solid var(--museum-brass);
+  outline-offset: 2px;
+}
+
+.museum-nav:focus-visible {
+  outline-offset: 2px;
 }
