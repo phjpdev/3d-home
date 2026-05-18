@@ -75,11 +75,9 @@ export function FloorWalkControls({
   sceneRoot,
   doorstepPose,
 }: FloorWalkControlsProps) {
-  const { camera, gl, scene } = useThree();
+  const { camera, gl } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
   const pointer = useRef(new THREE.Vector2());
-  const hoverPoint = useRef<THREE.Vector3 | null>(null);
-  const hoverNormal = useRef(new THREE.Vector3(0, 1, 0));
   const yaw = useRef(0);
   const pitch = useRef(0);
   const dragging = useRef(false);
@@ -87,7 +85,6 @@ export function FloorWalkControls({
   const last = useRef({ x: 0, y: 0 });
   const start = useRef({ x: 0, y: 0 });
   const transit = useRef<Transit | null>(null);
-  const marker = useRef<THREE.Group | null>(null);
 
   const DRAG_PX = 10;
 
@@ -111,17 +108,7 @@ export function FloorWalkControls({
       floorMaxY,
       maxStep,
     );
-    if (!hit) {
-      hoverPoint.current = null;
-      return false;
-    }
-
-    const n = hit.face!.normal
-      .clone()
-      .transformDirection((hit.object as THREE.Mesh).matrixWorld);
-    hoverPoint.current = hit.point.clone();
-    hoverNormal.current.copy(n).normalize();
-    return true;
+    return hit !== null;
   };
 
   useLayoutEffect(() => {
@@ -134,54 +121,6 @@ export function FloorWalkControls({
       p.updateProjectionMatrix();
     };
   }, [camera]);
-
-  useLayoutEffect(() => {
-    const group = new THREE.Group();
-    const ovalGeom = new THREE.CircleGeometry(0.45, 48);
-    const ovalMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.42,
-      depthWrite: false,
-      depthTest: false,
-    });
-    const oval = new THREE.Mesh(ovalGeom, ovalMat);
-    oval.rotation.x = -Math.PI / 2;
-    oval.scale.set(1.35, 1, 0.75);
-
-    const chevShape = new THREE.Shape();
-    chevShape.moveTo(0, 0.35);
-    chevShape.lineTo(0.45, -0.35);
-    chevShape.lineTo(-0.45, -0.35);
-    chevShape.closePath();
-    const chevGeom = new THREE.ShapeGeometry(chevShape);
-    const chevMat = new THREE.MeshBasicMaterial({
-      color: 0x27272a,
-      transparent: true,
-      opacity: 0.92,
-      depthWrite: false,
-      depthTest: false,
-      side: THREE.DoubleSide,
-    });
-    const chev = new THREE.Mesh(chevGeom, chevMat);
-    chev.rotation.x = -Math.PI / 2;
-    chev.position.y = 0.02;
-
-    group.add(oval);
-    group.add(chev);
-    group.visible = false;
-    marker.current = group;
-    scene.add(group);
-
-    return () => {
-      scene.remove(group);
-      ovalGeom.dispose();
-      ovalMat.dispose();
-      chevGeom.dispose();
-      chevMat.dispose();
-      marker.current = null;
-    };
-  }, [scene]);
 
   useLayoutEffect(() => {
     camera.position.copy(doorstepPose.eye);
@@ -366,7 +305,6 @@ export function FloorWalkControls({
   }, [camera]);
 
   useFrame(() => {
-    const g = marker.current;
     const tr = transit.current;
 
     if (tr) {
@@ -393,26 +331,12 @@ export function FloorWalkControls({
         yaw.current = tr.endYaw;
         pitch.current = 0;
       }
-      if (g) g.visible = false;
       return;
     }
 
     const hovering = !dragging.current && tryPickHover();
 
     gl.domElement.style.cursor = hovering ? CURSOR_WALK : "";
-
-    if (g && hoverPoint.current) {
-      const pt = hoverPoint.current;
-      const n = hoverNormal.current;
-      g.visible = true;
-      g.position.copy(pt).addScaledVector(n, 0.025);
-      g.quaternion.setFromUnitVectors(
-        new THREE.Vector3(0, 1, 0),
-        n.clone().normalize(),
-      );
-    } else if (g) {
-      g.visible = false;
-    }
 
     camera.rotation.order = "YXZ";
     camera.rotation.y = yaw.current;
