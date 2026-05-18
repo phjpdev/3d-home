@@ -10,6 +10,8 @@ import {
 } from "react";
 import type { HouseViewMode } from "@/components/HouseViewer";
 import {
+  hydrateAssetLibraryFromVault,
+  migrateHeavyDataUrlsToVault,
   readStoredAssetLibrary,
   writeStoredAssetLibrary,
   type HouseSiteMode,
@@ -50,6 +52,9 @@ export type PlacementPanelContext = {
       | AssetLibrariesState
       | ((prev: AssetLibrariesState) => AssetLibrariesState),
   ) => void;
+  /** Shown after a failed asset-library write (e.g. localStorage quota). */
+  libraryPersistNotice: string | null;
+  dismissLibraryPersistNotice: () => void;
 };
 
 export type HouseExperienceProps = {
@@ -60,6 +65,19 @@ export type HouseExperienceProps = {
 const STORAGE_ASSIGNMENTS_KEY = "3d-home:furniture-assignments";
 const STORAGE_WALL_PREFIX = "3d-home:wall-image:";
 
+function sanitizeAssignments(
+  assignments: Record<string, string>,
+): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const [slotId, src] of Object.entries(assignments)) {
+    if (typeof src !== "string" || src.length === 0) continue;
+    if (src.startsWith("blob:")) continue;
+    /** `indexeddb:…` survives reload via vault */
+    next[slotId] = src;
+  }
+  return next;
+}
+
 export function readStoredAssignments(
   siteMode: HouseSiteMode,
 ): Record<string, string> {
@@ -68,7 +86,16 @@ export function readStoredAssignments(
     const raw = localStorage.getItem(STORAGE_ASSIGNMENTS_KEY);
     if (!raw) return {};
     const all = JSON.parse(raw) as Record<string, Record<string, string>>;
-    return all?.[siteMode] ?? {};
+    const bucketRaw = all?.[siteMode] ?? {};
+    const cleaned = sanitizeAssignments(bucketRaw);
+    if (
+      Object.keys(cleaned).length !== Object.keys(bucketRaw).length ||
+      Object.entries(cleaned).some(([k, v]) => bucketRaw[k] !== v)
+    ) {
+      all[siteMode] = cleaned;
+      localStorage.setItem(STORAGE_ASSIGNMENTS_KEY, JSON.stringify(all));
+    }
+    return cleaned;
   } catch {
     return {};
   }
@@ -142,12 +169,39 @@ export default function HouseExperience({
     images: [],
   });
 
+  const [libraryPersistNotice, setLibraryPersistNotice] = useState<
+    string | null
+  >(null);
+
+  const dismissLibraryPersistNotice = useCallback(() => {
+    setLibraryPersistNotice(null);
+  }, []);
+
   useEffect(() => {
+    let cancel = false;
     startTransition(() => {
       setFurnitureAssignments(readStoredAssignments(siteMode));
       setWallImageSrcState(readStoredWall(siteMode));
-      setAssetLibrariesState(readStoredAssetLibrary(siteMode));
     });
+
+    void (async () => {
+      try {
+        await migrateHeavyDataUrlsToVault(siteMode);
+      } catch {
+        /* IDB unavailable */
+      }
+      const meta = readStoredAssetLibrary(siteMode);
+      try {
+        const hydrated = await hydrateAssetLibraryFromVault(meta);
+        if (!cancel) startTransition(() => setAssetLibrariesState(hydrated));
+      } catch {
+        if (!cancel) startTransition(() => setAssetLibrariesState(meta));
+      }
+    })();
+
+    return () => {
+      cancel = true;
+    };
   }, [siteMode]);
 
   const setAssignments = useCallback(
@@ -159,7 +213,6 @@ export default function HouseExperience({
       setFurnitureAssignments((prev) => {
         const resolved = typeof next === "function" ? next(prev) : next;
         writeStoredAssignments(siteMode, resolved);
-        window.dispatchEvent(new CustomEvent("house-storage-updated"));
         return resolved;
       });
     },
@@ -170,7 +223,6 @@ export default function HouseExperience({
     (next: string | null) => {
       setWallImageSrcState(next);
       writeStoredWall(siteMode, next);
-      window.dispatchEvent(new CustomEvent("house-storage-updated"));
     },
     [siteMode],
   );
@@ -183,8 +235,14 @@ export default function HouseExperience({
     ) => {
       setAssetLibrariesState((prev) => {
         const resolved = typeof next === "function" ? next(prev) : next;
-        writeStoredAssetLibrary(siteMode, resolved);
-        window.dispatchEvent(new CustomEvent("house-storage-updated"));
+        const ok = writeStoredAssetLibrary(siteMode, resolved);
+        queueMicrotask(() => {
+          setLibraryPersistNotice(
+            ok
+              ? null
+              : "Could not save the asset list to browser storage (localStorage). Try freeing space or clear site data.",
+          );
+        });
         return resolved;
       });
     },
@@ -196,14 +254,26 @@ export default function HouseExperience({
       startTransition(() => {
         setFurnitureAssignments(readStoredAssignments(siteMode));
         setWallImageSrcState(readStoredWall(siteMode));
-        setAssetLibrariesState(readStoredAssetLibrary(siteMode));
       });
+
+      void (async () => {
+        try {
+          await migrateHeavyDataUrlsToVault(siteMode);
+        } catch {
+          /* ignore */
+        }
+        const meta = readStoredAssetLibrary(siteMode);
+        try {
+          const hydrated = await hydrateAssetLibraryFromVault(meta);
+          startTransition(() => setAssetLibrariesState(hydrated));
+        } catch {
+          startTransition(() => setAssetLibrariesState(meta));
+        }
+      })();
     };
     window.addEventListener("storage", sync);
-    window.addEventListener("house-storage-updated", sync);
     return () => {
       window.removeEventListener("storage", sync);
-      window.removeEventListener("house-storage-updated", sync);
     };
   }, [siteMode]);
 
@@ -224,6 +294,8 @@ export default function HouseExperience({
           modelsLibrary: assetLibraries.models,
           imagesLibrary: assetLibraries.images,
           setAssetLibraries,
+          libraryPersistNotice,
+          dismissLibraryPersistNotice,
         }
       : null;
 

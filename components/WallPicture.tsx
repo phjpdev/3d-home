@@ -3,6 +3,11 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 
+import {
+  getVaultAssetBuffer,
+  indexedDbAssetId,
+  isIndexedDbRef,
+} from "@/lib/assetVaultIdb";
 import { computeWallPicturePose } from "@/lib/wallPicturePose";
 
 export type WallPictureProps = {
@@ -31,30 +36,55 @@ function WallPictureInner({
 
   useEffect(() => {
     if (!imageSrc) return;
+
+    let cancelled = false;
+    let createdBlobUrl: string | null = null;
+
     const loader = new THREE.TextureLoader();
-    let revoked = false;
-    loader.load(
-      imageSrc,
-      (tex) => {
-        if (revoked) {
-          tex.dispose();
+
+    async function run() {
+      let loadSrc = imageSrc;
+
+      if (isIndexedDbRef(imageSrc)) {
+        const id = indexedDbAssetId(imageSrc);
+        const buf =
+          id && !cancelled ? await getVaultAssetBuffer(id) : null;
+        if (cancelled) return;
+        if (!buf?.byteLength) {
+          setTexture(null);
           return;
         }
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.wrapS = THREE.ClampToEdgeWrapping;
-        tex.wrapT = THREE.ClampToEdgeWrapping;
-        tex.minFilter = THREE.LinearMipmapLinearFilter;
-        tex.magFilter = THREE.LinearFilter;
-        tex.needsUpdate = true;
-        setTexture(tex);
-      },
-      undefined,
-      () => {
-        setTexture(null);
-      },
-    );
+        createdBlobUrl = URL.createObjectURL(new Blob([buf]));
+        loadSrc = createdBlobUrl;
+      }
+
+      loader.load(
+        loadSrc,
+        (tex) => {
+          if (cancelled) {
+            tex.dispose();
+            return;
+          }
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.wrapS = THREE.ClampToEdgeWrapping;
+          tex.wrapT = THREE.ClampToEdgeWrapping;
+          tex.minFilter = THREE.LinearMipmapLinearFilter;
+          tex.magFilter = THREE.LinearFilter;
+          tex.needsUpdate = true;
+          setTexture(tex);
+        },
+        undefined,
+        () => {
+          if (!cancelled) setTexture(null);
+        },
+      );
+    }
+
+    void run();
+
     return () => {
-      revoked = true;
+      cancelled = true;
+      if (createdBlobUrl) URL.revokeObjectURL(createdBlobUrl);
       setTexture((prev) => {
         if (prev) prev.dispose();
         return null;

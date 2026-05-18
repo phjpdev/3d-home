@@ -5,7 +5,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import type { PlacementPanelContext } from "@/components/HouseExperience";
 import HouseExperience from "@/components/HouseExperience";
-import { newLibraryId, type LibraryItem } from "@/lib/assetLibrary";
+import {
+  normalizedIndexedDbPlacementRef,
+  newLibraryId,
+  refsMatchingLibraryItem,
+  type LibraryItem,
+} from "@/lib/assetLibrary";
+import { deleteVaultAsset, putVaultAsset } from "@/lib/assetVaultIdb";
 import { viewerModelSrc } from "@/lib/modelUrl";
 
 const GlbPreview = dynamicImport(() => import("@/components/GlbPreview"), {
@@ -19,15 +25,26 @@ const GlbPreview = dynamicImport(() => import("@/components/GlbPreview"), {
 
 type EditTab = "model" | "picture";
 
-function stripAssignmentsUsingSrc(
+function placementStoredRef(it: LibraryItem): string {
+  return it.vaultBacked
+    ? normalizedIndexedDbPlacementRef(it.id)
+    : it.src;
+}
+
+function stripAssignmentsForLibraryItem(
   assignments: Record<string, string>,
-  src: string,
+  item: LibraryItem,
 ): Record<string, string> {
   const next = { ...assignments };
+  const refs = new Set(refsMatchingLibraryItem(item));
   for (const [k, v] of Object.entries(next)) {
-    if (v === src) delete next[k];
+    if (refs.has(v)) delete next[k];
   }
   return next;
+}
+
+function revokeObjectUrlMaybe(src: string) {
+  if (src.startsWith("blob:")) URL.revokeObjectURL(src);
 }
 
 function fileToDataUrl(file: File) {
@@ -48,12 +65,16 @@ function EditPanel(context: PlacementPanelContext) {
     modelsLibrary,
     imagesLibrary,
     setAssetLibraries,
+    libraryPersistNotice,
+    dismissLibraryPersistNotice,
   } = context;
 
   const [editTab, setEditTab] = useState<EditTab>("model");
 
   const [previewItem, setPreviewItem] = useState<LibraryItem | null>(null);
   const [placeSlotId, setPlaceSlotId] = useState("");
+  const [glbReading, setGlbReading] = useState(false);
+  const [pictureReading, setPictureReading] = useState(false);
 
   useEffect(() => {
     if (!previewItem || previewItem.kind !== "glb") return;
@@ -64,52 +85,39 @@ function EditPanel(context: PlacementPanelContext) {
     });
   }, [previewItem, registry.slots]);
 
-  const pushModel = useCallback(
-    (src: string, label: string) => {
-      const item: LibraryItem = {
-        id: newLibraryId(),
-        kind: "glb",
-        src,
-        label,
-      };
-      setAssetLibraries((prev) => ({
-        models: [...prev.models, item],
-        images: prev.images,
-      }));
-    },
-    [setAssetLibraries],
-  );
-
-  const pushImage = useCallback(
-    (src: string, label: string) => {
-      const item: LibraryItem = {
-        id: newLibraryId(),
-        kind: "image",
-        src,
-        label,
-      };
-      setAssetLibraries((prev) => ({
-        models: prev.models,
-        images: [...prev.images, item],
-      }));
+  const addLibraryItem = useCallback(
+    (item: LibraryItem) => {
+      setAssetLibraries((prev) =>
+        item.kind === "glb"
+          ? { models: [...prev.models, item], images: prev.images }
+          : { models: prev.models, images: [...prev.images, item] },
+      );
     },
     [setAssetLibraries],
   );
 
   const removeLibraryItem = useCallback(
     (item: LibraryItem) => {
+      revokeObjectUrlMaybe(item.src);
+      void deleteVaultAsset(item.id);
+      const wallCandidates = refsMatchingLibraryItem(item);
+      if (
+        wallImageSrc &&
+        wallCandidates.some((ref) => ref === wallImageSrc)
+      ) {
+        setWallSrc(null);
+      }
       if (item.kind === "glb") {
         setAssetLibraries((prev) => ({
           models: prev.models.filter((m) => m.id !== item.id),
           images: prev.images,
         }));
-        setAssignments((prev) => stripAssignmentsUsingSrc(prev, item.src));
+        setAssignments((prev) => stripAssignmentsForLibraryItem(prev, item));
       } else {
         setAssetLibraries((prev) => ({
           models: prev.models,
           images: prev.images.filter((m) => m.id !== item.id),
         }));
-        if (wallImageSrc === item.src) setWallSrc(null);
       }
     },
     [setAssetLibraries, setAssignments, setWallSrc, wallImageSrc],
@@ -119,11 +127,36 @@ function EditPanel(context: PlacementPanelContext) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    setGlbReading(true);
     try {
-      const dataUrl = await fileToDataUrl(file);
-      pushModel(dataUrl, file.name);
+      const buf = await file.arrayBuffer();
+      const id = newLibraryId();
+      try {
+        await putVaultAsset(id, "glb", buf);
+        const url = URL.createObjectURL(
+          new Blob([buf], { type: "model/gltf-binary" }),
+        );
+        addLibraryItem({
+          id,
+          kind: "glb",
+          src: url,
+          label: file.name,
+          vaultBacked: true,
+        });
+      } catch {
+        const dataUrl = await fileToDataUrl(file);
+        addLibraryItem({
+          id,
+          kind: "glb",
+          src: dataUrl,
+          label: file.name,
+          vaultBacked: false,
+        });
+      }
     } catch {
       /* ignore */
+    } finally {
+      setGlbReading(false);
     }
   };
 
@@ -131,11 +164,34 @@ function EditPanel(context: PlacementPanelContext) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    setPictureReading(true);
     try {
-      const dataUrl = await fileToDataUrl(file);
-      pushImage(dataUrl, file.name);
+      const buf = await file.arrayBuffer();
+      const id = newLibraryId();
+      try {
+        await putVaultAsset(id, "image", buf);
+        const url = URL.createObjectURL(new Blob([buf]));
+        addLibraryItem({
+          id,
+          kind: "image",
+          src: url,
+          label: file.name,
+          vaultBacked: true,
+        });
+      } catch {
+        const dataUrl = await fileToDataUrl(file);
+        addLibraryItem({
+          id,
+          kind: "image",
+          src: dataUrl,
+          label: file.name,
+          vaultBacked: false,
+        });
+      }
     } catch {
       /* ignore */
+    } finally {
+      setPictureReading(false);
     }
   };
 
@@ -150,9 +206,10 @@ function EditPanel(context: PlacementPanelContext) {
     if (previewItem.kind === "glb") {
       const sid = placeSlotId || registry.slots[0]?.id;
       if (!sid) return;
-      setAssignments((prev) => ({ ...prev, [sid]: previewItem.src }));
+      const ref = placementStoredRef(previewItem);
+      setAssignments((prev) => ({ ...prev, [sid]: ref }));
     } else {
-      setWallSrc(previewItem.src);
+      setWallSrc(placementStoredRef(previewItem));
     }
     setPreviewItem(null);
   };
@@ -266,6 +323,25 @@ function EditPanel(context: PlacementPanelContext) {
         {tabBtn("picture", "Picture")}
       </div>
 
+      {libraryPersistNotice ? (
+        <div
+          role="status"
+          className="museum-sans mx-3 mt-3 flex-shrink-0 rounded-sm border border-amber-800/35 bg-amber-50/90 px-2.5 py-2 text-[11px] leading-relaxed text-amber-950"
+        >
+          <div className="flex gap-2">
+            <p className="min-w-0 flex-1">{libraryPersistNotice}</p>
+            <button
+              type="button"
+              aria-label="Dismiss storage notice"
+              onClick={() => dismissLibraryPersistNotice()}
+              className="flex-shrink-0 rounded px-1 text-[10px] font-semibold underline decoration-amber-900/45"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
         {editTab === "model" ? (
           <section aria-label="Three-dimensional assets" className="space-y-4">
@@ -283,17 +359,25 @@ function EditPanel(context: PlacementPanelContext) {
                 </Link>{" "}
                 show here. You can also add a local file below.
               </p>
-              <ul className="mt-2 space-y-2">
+              <ul className="mt-2 space-y-2" aria-busy={glbReading}>
                 {modelsLibrary.length === 0 ? (
                   <li className="text-[11px] text-[var(--museum-muted)]">
-                    None yet — open{" "}
-                    <Link
-                      href="/generate"
-                      className="text-[var(--museum-brass-dark)] underline"
-                    >
-                      Generate model
-                    </Link>{" "}
-                    or upload a .glb below.
+                    {glbReading ? (
+                      <span className="text-[var(--museum-ink-soft)]">
+                        Reading your .glb — large files take a moment…
+                      </span>
+                    ) : (
+                      <>
+                        None yet — open{" "}
+                        <Link
+                          href="/generate"
+                          className="text-[var(--museum-brass-dark)] underline"
+                        >
+                          Generate model
+                        </Link>{" "}
+                        or upload a .glb below.
+                      </>
+                    )}
                   </li>
                 ) : (
                   modelsLibrary.map((it) => (
@@ -309,17 +393,28 @@ function EditPanel(context: PlacementPanelContext) {
                   ))
                 )}
               </ul>
+              {glbReading && modelsLibrary.length > 0 ? (
+                <p className="mt-2 text-[11px] text-[var(--museum-ink-soft)]">
+                  Reading upload — large files take a moment; the list refreshes when
+                  ready.
+                </p>
+              ) : null}
             </div>
 
             <div>
               <h3 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--museum-muted)]">
                 Upload GLB
               </h3>
-              <label className="museum-sans mt-2 inline-flex cursor-pointer flex-wrap items-center gap-1 text-[11px] text-[var(--museum-muted)]">
+              <label
+                className={`museum-sans mt-2 inline-flex flex-wrap items-center gap-1 text-[11px] text-[var(--museum-muted)] ${
+                  glbReading ? "cursor-wait opacity-70" : "cursor-pointer"
+                }`}
+              >
                 <input
                   type="file"
                   accept=".glb,model/gltf-binary"
                   className="sr-only"
+                  disabled={glbReading}
                   onChange={(e) => void onUploadGlb(e)}
                 />
                 <span className="text-[var(--museum-brass-dark)] underline">
@@ -327,6 +422,11 @@ function EditPanel(context: PlacementPanelContext) {
                 </span>
                 <span>.glb stored in this browser</span>
               </label>
+              {glbReading ? (
+                <p className="mt-1 text-[11px] text-[var(--museum-ink-soft)]">
+                  Loading file into memory…
+                </p>
+              ) : null}
             </div>
           </section>
         ) : (
@@ -338,9 +438,16 @@ function EditPanel(context: PlacementPanelContext) {
               <input
                 type="file"
                 accept="image/png,image/jpeg,.jpg,.jpeg,.png"
-                className="museum-sans mt-2 block w-full text-[11px] file:mr-2 file:rounded-sm file:border file:border-[var(--museum-rule)] file:bg-transparent file:px-2 file:py-1"
+                disabled={pictureReading}
+                aria-busy={pictureReading}
+                className="museum-sans mt-2 block w-full text-[11px] file:mr-2 file:rounded-sm file:border file:border-[var(--museum-rule)] file:bg-transparent file:px-2 file:py-1 disabled:opacity-60"
                 onChange={(e) => void onUploadPicture(e)}
               />
+              {pictureReading ? (
+                <p className="mt-1 text-[11px] text-[var(--museum-ink-soft)]">
+                  Reading picture…
+                </p>
+              ) : null}
             </div>
             <div>
               <h3 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--museum-muted)]">

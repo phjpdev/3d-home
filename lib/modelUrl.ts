@@ -1,7 +1,12 @@
 /** Resolve a Meshy HTTPS URL for same-origin drei loading via our proxy. */
 export function viewerModelSrc(rawUrl: string): string {
   const raw = rawUrl.trim().replace(/^['"]+|['"]+$/g, "");
-  if (raw.startsWith("blob:") || raw.startsWith("data:") || raw.startsWith("/")) {
+  if (
+    raw.startsWith("blob:") ||
+    raw.startsWith("data:") ||
+    raw.startsWith("indexeddb:") ||
+    raw.startsWith("/")
+  ) {
     return raw;
   }
   try {

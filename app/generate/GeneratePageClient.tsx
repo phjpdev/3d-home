@@ -77,7 +77,7 @@ export default function GenerateClient() {
       if (signal.aborted) return;
 
       if (!textureAfterPreview) {
-        appendGeneratedGlbToEditLibrary(
+        await appendGeneratedGlbToEditLibrary(
           previewPoll.glbUrl,
           `Meshy · ${shortPromptLabel(p)}`,
         );
@@ -100,7 +100,7 @@ export default function GenerateClient() {
         return;
       }
       setGlbUrl(refinePoll.glbUrl);
-      appendGeneratedGlbToEditLibrary(
+      await appendGeneratedGlbToEditLibrary(
         refinePoll.glbUrl,
         `Meshy · ${shortPromptLabel(p)}`,
       );
@@ -144,7 +144,7 @@ export default function GenerateClient() {
         return;
       }
       setGlbUrl(poll.glbUrl);
-      appendGeneratedGlbToEditLibrary(poll.glbUrl, `Meshy · ${file.name}`);
+      await appendGeneratedGlbToEditLibrary(poll.glbUrl, `Meshy · ${file.name}`);
     } catch (e) {
       setLog(e instanceof Error ? e.message : "error");
     } finally {

@@ -5,7 +5,20 @@ import { useThree } from "@react-three/fiber";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import * as THREE from "three";
 
+import {
+  getVaultAssetBuffer,
+  indexedDbAssetId,
+  isIndexedDbRef,
+} from "@/lib/assetVaultIdb";
 import { viewerModelSrc } from "@/lib/modelUrl";
+
+async function fetchArrayBuffer(uri: string): Promise<ArrayBuffer> {
+  const res = await fetch(uri);
+  if (!res.ok) {
+    throw new Error(`fetch_failed_${res.status}`);
+  }
+  return res.arrayBuffer();
+}
 
 /**
  * Loads placed GLBs outside drei's useGLTF so progress updates from these models
@@ -28,22 +41,84 @@ function OnePlacement({
     const resolved = viewerModelSrc(url);
     const loader = new GLTFLoader();
 
-    loader.load(
-      resolved,
-      (gltf) => {
-        if (!cancelled) {
-          setScene(gltf.scene);
-          invalidate();
+    async function loadInlinedThenRemote() {
+      try {
+        if (isIndexedDbRef(resolved)) {
+          const id = indexedDbAssetId(resolved);
+          const buffer =
+            id && !cancelled ? await getVaultAssetBuffer(id) : null;
+          if (cancelled) return;
+          if (!buffer?.byteLength) {
+            setScene(null);
+            invalidate();
+            return;
+          }
+          loader.parse(
+            buffer,
+            "",
+            (gltf) => {
+              if (!cancelled) {
+                setScene(gltf.scene);
+                invalidate();
+              }
+            },
+            () => {
+              if (!cancelled) {
+                setScene(null);
+                invalidate();
+              }
+            },
+          );
+          return;
         }
-      },
-      undefined,
-      () => {
+
+        if (resolved.startsWith("data:") || resolved.startsWith("blob:")) {
+          const buffer = await fetchArrayBuffer(resolved);
+          if (cancelled) return;
+          loader.parse(
+            buffer,
+            "",
+            (gltf) => {
+              if (!cancelled) {
+                setScene(gltf.scene);
+                invalidate();
+              }
+            },
+            () => {
+              if (!cancelled) {
+                setScene(null);
+                invalidate();
+              }
+            },
+          );
+          return;
+        }
+
+        loader.load(
+          resolved,
+          (gltf) => {
+            if (!cancelled) {
+              setScene(gltf.scene);
+              invalidate();
+            }
+          },
+          undefined,
+          () => {
+            if (!cancelled) {
+              setScene(null);
+              invalidate();
+            }
+          },
+        );
+      } catch {
         if (!cancelled) {
           setScene(null);
           invalidate();
         }
-      },
-    );
+      }
+    }
+
+    void loadInlinedThenRemote();
 
     return () => {
       cancelled = true;
