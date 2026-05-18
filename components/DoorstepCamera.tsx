@@ -3,6 +3,7 @@
 import { useLayoutEffect } from "react";
 import * as THREE from "three";
 import { useThree } from "@react-three/fiber";
+import { computeOrbitOverviewPose } from "@/lib/doorstepPose";
 
 export type DoorstepCameraProps = {
   scene: THREE.Object3D | null;
@@ -16,63 +17,38 @@ export function DoorstepCamera({
   interiorAlongNegativeZ = true,
   onPositioned,
 }: DoorstepCameraProps) {
+  void interiorAlongNegativeZ;
   const { camera, controls } = useThree();
 
   useLayoutEffect(() => {
     if (!scene) return;
 
-    scene.updateWorldMatrix(true, true);
+    const pose = computeOrbitOverviewPose(scene);
+    const persp = camera as THREE.PerspectiveCamera;
 
-    const box = new THREE.Box3().setFromObject(scene);
-    if (box.isEmpty()) {
+    if (!pose) {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => onPositioned?.());
       });
       return;
     }
 
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
-
-    const persp = camera as THREE.PerspectiveCamera;
-
-    const porchFloor = box.min.y + size.y * 0.035;
-    const eyeHeight = THREE.MathUtils.clamp(size.y * 0.052, 1.35, 1.85);
-    const eyeY = porchFloor + eyeHeight;
-
-    const insetAlongDepth = size.z * 0.018;
-    const lookAhead = size.z * 0.4;
-
-    let eyeZ: number;
-    let targetZ: number;
-
-    if (interiorAlongNegativeZ) {
-      eyeZ = box.max.z - insetAlongDepth;
-      targetZ = eyeZ - lookAhead;
-    } else {
-      eyeZ = box.min.z + insetAlongDepth;
-      targetZ = eyeZ + lookAhead;
-    }
-
-    const eye = new THREE.Vector3(center.x, eyeY, eyeZ);
-    const target = new THREE.Vector3(center.x, eyeY - size.y * 0.018, targetZ);
-
-    persp.position.copy(eye);
-    persp.lookAt(target);
+    persp.position.copy(pose.eye);
+    persp.lookAt(pose.target);
 
     const orbit = controls as THREE.EventDispatcher & {
       target?: THREE.Vector3;
       update?: () => void;
     };
     if (orbit?.target) {
-      orbit.target.copy(target);
+      orbit.target.copy(pose.target);
       orbit.update?.();
     }
 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => onPositioned?.());
     });
-  }, [scene, camera, controls, interiorAlongNegativeZ, onPositioned]);
+  }, [scene, camera, controls, onPositioned]);
 
   return null;
 }

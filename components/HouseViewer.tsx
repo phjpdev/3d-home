@@ -1,11 +1,28 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, useProgress } from "@react-three/drei";
-import type * as THREE from "three";
+import * as THREE from "three";
+import type { ResolvedWaypoint } from "@/data/waypoints";
+import type { SceneRegistry } from "@/lib/sceneRegistry";
+import { computeDoorstepPose } from "@/lib/doorstepPose";
 import { DoorstepCamera } from "./DoorstepCamera";
+import { FloorWalkControls } from "./FloorWalkControls";
 import { HouseModel } from "./HouseModel";
+
+export type HouseViewMode = "overview" | "walk";
+
+export type HouseViewerProps = {
+  viewMode?: HouseViewMode;
+  furnitureAssignments?: Record<string, string>;
+  wallImageSrc?: string | null;
+  currentWaypointId?: string;
+  onWaypointMap?: (map: Map<string, ResolvedWaypoint>) => void;
+  onRegistry?: (info: { registry: SceneRegistry }) => void;
+  onFloorNavigate?: (to: string) => void;
+  onWalkBack?: () => void;
+};
 
 function LoadingReporter({
   onChange,
@@ -21,13 +38,22 @@ function LoadingReporter({
   return null;
 }
 
-export default function HouseViewer() {
+export default function HouseViewer({
+  viewMode = "overview",
+  onWaypointMap,
+  onRegistry,
+}: HouseViewerProps = {}) {
   const [sceneRoot, setSceneRoot] = useState<THREE.Object3D | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [loadProgress, setLoadProgress] = useState({
     active: true,
     progress: 0,
   });
+
+  const doorstepPose = useMemo(
+    () => (sceneRoot ? computeDoorstepPose(sceneRoot) : null),
+    [sceneRoot],
+  );
 
   const handleLoadingChange = useCallback(
     (state: { active: boolean; progress: number }) => {
@@ -39,6 +65,26 @@ export default function HouseViewer() {
   const handleCameraPositioned = useCallback(() => {
     setCameraReady(true);
   }, []);
+
+  useEffect(() => {
+    if (viewMode !== "walk") return;
+    if (!sceneRoot || loadProgress.active) return;
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => setCameraReady(true));
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [viewMode, sceneRoot, loadProgress.active]);
+
+  useEffect(() => {
+    if (!sceneRoot) return;
+    onWaypointMap?.(new Map());
+    onRegistry?.({ registry: { slotIds: [] } });
+  }, [sceneRoot, onWaypointMap, onRegistry]);
 
   const showLoadingOverlay = !(
     sceneRoot !== null &&
@@ -70,10 +116,14 @@ export default function HouseViewer() {
       <Canvas
         className="h-full w-full touch-none"
         camera={{ position: [0, 1.6, 6], fov: 45 }}
-        gl={{ antialias: true }}
+        gl={{ antialias: true, alpha: false }}
+        onCreated={(state) => {
+          state.gl.setClearColor(0xffffff);
+          state.scene.background = new THREE.Color(0xffffff);
+        }}
         resize={{ scroll: false }}
       >
-        <color attach="background" args={["#fafafa"]} />
+        <color attach="background" args={["#ffffff"]} />
         <ambientLight intensity={0.55} />
         <directionalLight intensity={1.05} position={[12, 18, 10]} />
 
@@ -83,6 +133,7 @@ export default function HouseViewer() {
           enableDamping
           dampingFactor={0.08}
           makeDefault
+          enabled={viewMode === "overview"}
           maxPolarAngle={Math.PI * 0.495}
           minPolarAngle={Math.PI * 0.22}
           maxDistance={120}
@@ -93,7 +144,13 @@ export default function HouseViewer() {
           <HouseModel onSceneAvailable={setSceneRoot} />
         </Suspense>
 
-        <DoorstepCamera scene={sceneRoot} onPositioned={handleCameraPositioned} />
+        {viewMode === "overview" ? (
+          <DoorstepCamera scene={sceneRoot} onPositioned={handleCameraPositioned} />
+        ) : null}
+
+        {viewMode === "walk" && sceneRoot && doorstepPose ? (
+          <FloorWalkControls sceneRoot={sceneRoot} doorstepPose={doorstepPose} />
+        ) : null}
       </Canvas>
     </div>
   );
