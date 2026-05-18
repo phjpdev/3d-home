@@ -15,8 +15,46 @@ const CLICK_STEP_CAP = 1.85;
 const KEY_STEP = 0.68;
 const KEY_TRANSIT_MS = 640;
 
+function pickWalkableFloorHit(
+  hits: THREE.Intersection[],
+  camPos: THREE.Vector3,
+  floorMinY: number,
+  floorMaxY: number,
+  maxStep: number,
+): THREE.Intersection | null {
+  for (const h of hits) {
+    if (!h.face) continue;
+    const obj = h.object as THREE.Mesh;
+    if (!obj.visible) continue;
+
+    const n = h.face.normal
+      .clone()
+      .transformDirection(obj.matrixWorld);
+    if (n.y <= 0.62) continue;
+
+    const pt = h.point;
+    if (pt.y < floorMinY || pt.y > floorMaxY) continue;
+
+    const dx = pt.x - camPos.x;
+    const dz = pt.z - camPos.z;
+    const horiz = Math.hypot(dx, dz);
+    if (horiz > maxStep) continue;
+
+    return h;
+  }
+  return null;
+}
+
 function easeInOutCubic(t: number) {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+}
+
+/** Shortest signed rotation from `from` toward `to` in radians (for yaw). */
+function shortestYawDelta(from: number, to: number): number {
+  let d = to - from;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
 }
 
 type Transit = {
@@ -55,40 +93,35 @@ export function FloorWalkControls({
 
   const sizeVec = doorstepPose.bbox.getSize(new THREE.Vector3());
   const diagonal = sizeVec.length();
-  const maxStep = Math.min(Math.max(diagonal * 0.22, 4), 14);
-  const floorMinY = doorstepPose.porchFloorY - 0.35;
-  const floorMaxY = doorstepPose.porchFloorY + Math.max(sizeVec.y * 0.12, 0.45);
+  const maxStep = Math.min(Math.max(diagonal * 0.28, 5), 18);
+  /** Porch deck and interior floors (often below `porchFloorY`). */
+  const floorMinY = doorstepPose.bbox.min.y - 0.12;
+  const floorMaxY =
+    doorstepPose.bbox.min.y + Math.min(sizeVec.y * 0.42, 12);
 
   const tryPickHover = (): boolean => {
     raycaster.current.setFromCamera(pointer.current, camera);
     const hits = raycaster.current.intersectObject(sceneRoot, true);
     const camPos = camera.position;
 
-    for (const h of hits) {
-      if (!h.face) continue;
-      const obj = h.object as THREE.Mesh;
-      if (!obj.visible) continue;
-
-      const n = h.face.normal
-        .clone()
-        .transformDirection(obj.matrixWorld);
-      if (n.y < 0.82) continue;
-
-      const pt = h.point;
-      if (pt.y < floorMinY || pt.y > floorMaxY) continue;
-
-      const dx = pt.x - camPos.x;
-      const dz = pt.z - camPos.z;
-      const horiz = Math.hypot(dx, dz);
-      if (horiz > maxStep) continue;
-
-      hoverPoint.current = pt.clone();
-      hoverNormal.current.copy(n).normalize();
-      return true;
+    const hit = pickWalkableFloorHit(
+      hits,
+      camPos,
+      floorMinY,
+      floorMaxY,
+      maxStep,
+    );
+    if (!hit) {
+      hoverPoint.current = null;
+      return false;
     }
 
-    hoverPoint.current = null;
-    return false;
+    const n = hit.face!.normal
+      .clone()
+      .transformDirection((hit.object as THREE.Mesh).matrixWorld);
+    hoverPoint.current = hit.point.clone();
+    hoverNormal.current.copy(n).normalize();
+    return true;
   };
 
   useLayoutEffect(() => {
@@ -110,6 +143,7 @@ export function FloorWalkControls({
       transparent: true,
       opacity: 0.42,
       depthWrite: false,
+      depthTest: false,
     });
     const oval = new THREE.Mesh(ovalGeom, ovalMat);
     oval.rotation.x = -Math.PI / 2;
@@ -126,6 +160,7 @@ export function FloorWalkControls({
       transparent: true,
       opacity: 0.92,
       depthWrite: false,
+      depthTest: false,
       side: THREE.DoubleSide,
     });
     const chev = new THREE.Mesh(chevGeom, chevMat);
@@ -222,52 +257,44 @@ export function FloorWalkControls({
       const hits = raycaster.current.intersectObject(sceneRoot, true);
       const camPos = camera.position;
 
-      for (const h of hits) {
-        if (!h.face) continue;
-        const obj = h.object as THREE.Mesh;
-        if (!obj.visible) continue;
+      const hit = pickWalkableFloorHit(
+        hits,
+        camPos,
+        floorMinY,
+        floorMaxY,
+        maxStep,
+      );
+      if (!hit?.face) return;
 
-        const n = h.face.normal
-          .clone()
-          .transformDirection(obj.matrixWorld);
-        if (n.y < 0.82) continue;
+      const pt = hit.point;
+      const dx = pt.x - camPos.x;
+      const dz = pt.z - camPos.z;
+      const horiz = Math.hypot(dx, dz);
+      if (horiz < 1e-4) return;
 
-        const pt = h.point;
-        if (pt.y < floorMinY || pt.y > floorMaxY) continue;
+      const step = Math.min(horiz, CLICK_STEP_CAP);
+      const flatDir = new THREE.Vector3(dx / horiz, 0, dz / horiz);
 
-        const dx = pt.x - camPos.x;
-        const dz = pt.z - camPos.z;
-        const horiz = Math.hypot(dx, dz);
-        if (horiz < 1e-4 || horiz > maxStep) continue;
+      const dest = new THREE.Vector3(
+        camPos.x + flatDir.x * step,
+        camPos.y,
+        camPos.z + flatDir.z * step,
+      );
 
-        const step = Math.min(horiz, CLICK_STEP_CAP);
-        const flatDir = new THREE.Vector3(dx / horiz, 0, dz / horiz);
+      /**
+       * Match PerspectiveCamera YXZ yaw: horizontal look dir is (-sin(y), -cos(y)) in XZ.
+       * Do not use Object3D.lookAt + Euler — it can disagree by π with the camera and flip you around.
+       */
+      const endYaw = Math.atan2(-flatDir.x, -flatDir.z);
 
-        const dest = new THREE.Vector3(
-          camPos.x + flatDir.x * step,
-          camPos.y,
-          camPos.z + flatDir.z * step,
-        );
-
-        const orient = new THREE.Object3D();
-        orient.position.copy(camPos);
-        orient.lookAt(camPos.x + flatDir.x, camPos.y, camPos.z + flatDir.z);
-        const eu = new THREE.Euler().setFromQuaternion(
-          orient.quaternion,
-          "YXZ",
-        );
-        const endYaw = eu.y;
-
-        transit.current = {
-          from: camPos.clone(),
-          to: dest,
-          startYaw: yaw.current,
-          endYaw,
-          t0: performance.now(),
-          durationMs: Math.min(1650, 780 + step * 380),
-        };
-        break;
-      }
+      transit.current = {
+        from: camPos.clone(),
+        to: dest,
+        startYaw: yaw.current,
+        endYaw,
+        t0: performance.now(),
+        durationMs: Math.min(1650, 780 + step * 380),
+      };
     };
 
     const onCancel = (e: PointerEvent) => {
@@ -350,8 +377,7 @@ export function FloorWalkControls({
 
       camera.position.lerpVectors(tr.from, tr.to, k);
 
-      let dy = tr.endYaw - tr.startYaw;
-      dy = ((dy + Math.PI) % (Math.PI * 2)) - Math.PI;
+      const dy = shortestYawDelta(tr.startYaw, tr.endYaw);
       yaw.current = tr.startYaw + dy * k;
 
       pitch.current = THREE.MathUtils.lerp(pitch.current, 0, 0.14);
