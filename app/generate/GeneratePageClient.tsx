@@ -4,6 +4,15 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamicImport from "next/dynamic";
 
+import {
+  appendGeneratedGlbToEditLibrary,
+} from "@/lib/assetLibrary";
+import {
+  meshyStartImageTo3d,
+  meshyStartTextPreview,
+  meshyStartTextRefine,
+  pollMeshyUntilDone,
+} from "@/lib/meshyClient";
 import { viewerModelSrc } from "@/lib/modelUrl";
 
 const GlbPreview = dynamicImport(() => import("@/components/GlbPreview"), {
@@ -16,22 +25,6 @@ const GlbPreview = dynamicImport(() => import("@/components/GlbPreview"), {
 });
 
 type Tab = "text" | "image";
-
-type PollableTask = {
-  id: string;
-  status?: string;
-  progress?: number;
-  model_urls?: { glb?: string };
-  task_error?: { message?: string };
-};
-
-async function pollTask(path: string): Promise<PollableTask> {
-  const res = await fetch(path, { cache: "no-store" });
-  if (!res.ok) {
-    throw new Error(`status ${res.status}`);
-  }
-  return (await res.json()) as PollableTask;
-}
 
 export default function GenerateClient() {
   const [tab, setTab] = useState<Tab>("text");
@@ -49,109 +42,68 @@ export default function GenerateClient() {
     return () => pollAbort.current?.abort();
   }, []);
 
-  const runPoll = async (kind: Tab, id: string): Promise<boolean> => {
-    pollAbort.current?.abort();
-    pollAbort.current = new AbortController();
-    const sig = pollAbort.current.signal;
-
-    const pathPrefix =
-      kind === "text" ? `/api/meshy/v2/text-to-3d/` : `/api/meshy/v1/image-to-3d/`;
-
-    for (let n = 0; n < 540; n++) {
-      if (sig.aborted) return false;
-      const data = await pollTask(
-        `${pathPrefix}${encodeURIComponent(id)}`,
-      );
-      setLog(`${data.status ?? "?"} · ${data.progress ?? 0}%`);
-
-      const st = (data.status || "").toUpperCase();
-      if (st === "SUCCEEDED") {
-        const remote = data.model_urls?.glb ?? null;
-        setGlbUrl(remote);
-        return true;
-      }
-      if (st === "FAILED") {
-        setLog(data.task_error?.message || "generation_failed");
-        return false;
-      }
-
-      await new Promise((r) => setTimeout(r, 4200));
-    }
-    setLog("timed_out_waiting");
-    return false;
-  };
+  const shortPromptLabel = (p: string) =>
+    p.length > 42 ? `${p.slice(0, 40)}…` : p;
 
   const onTextGenerate = async () => {
     setBusy(true);
     setLog(null);
     setGlbUrl(null);
+    pollAbort.current?.abort();
+    pollAbort.current = new AbortController();
+    const signal = pollAbort.current.signal;
     try {
       const p = prompt.slice(0, 600);
       if (!p.trim()) {
         setLog("prompt_required");
         return;
       }
-      const previewRes = await fetch("/api/meshy/v2/text-to-3d", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "preview",
-          prompt: p,
-          target_formats: ["glb"],
-          ai_model: "latest",
-          should_remesh: false,
-        }),
+      const start = await meshyStartTextPreview({ prompt: p });
+      if (!start.ok) {
+        setLog(start.message);
+        return;
+      }
+
+      const previewPoll = await pollMeshyUntilDone("text", start.taskId, {
+        signal,
+        onProgress: setLog,
       });
-      const previewJson = await previewRes.json();
-
-      if (!previewRes.ok) {
-        setLog(JSON.stringify(previewJson));
+      if (!previewPoll.ok) {
+        setLog(previewPoll.message);
         return;
       }
 
-      const previewTaskId =
-        typeof previewJson === "object" && previewJson && "result" in previewJson
-          ? String(previewJson.result)
-          : null;
+      setGlbUrl(previewPoll.glbUrl);
+      if (signal.aborted) return;
 
-      if (!previewTaskId) {
-        setLog("unexpected_meshy_preview_response");
+      if (!textureAfterPreview) {
+        appendGeneratedGlbToEditLibrary(
+          previewPoll.glbUrl,
+          `Meshy · ${shortPromptLabel(p)}`,
+        );
         return;
       }
 
-      const previewSucceeded = await runPoll("text", previewTaskId);
+      const refine = await meshyStartTextRefine(start.taskId);
+      if (!refine.ok) {
+        setLog(refine.message);
+        return;
+      }
 
-      if (!textureAfterPreview || !previewSucceeded) return;
-
-      if (pollAbort.current?.signal.aborted) return;
-
-      const refineRes = await fetch("/api/meshy/v2/text-to-3d", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "refine",
-          preview_task_id: previewTaskId,
-          target_formats: ["glb"],
-          ai_model: "latest",
-        }),
+      setGlbUrl(null);
+      const refinePoll = await pollMeshyUntilDone("text", refine.taskId, {
+        signal,
+        onProgress: setLog,
       });
-
-      const refineJson = await refineRes.json();
-
-      if (!refineRes.ok) {
-        setLog(`refine_issue ${JSON.stringify(refineJson)}`);
+      if (!refinePoll.ok) {
+        setLog(refinePoll.message);
         return;
       }
-
-      const refineId =
-        typeof refineJson === "object" && refineJson && "result" in refineJson
-          ? String(refineJson.result)
-          : null;
-
-      if (refineId) {
-        setGlbUrl(null);
-        await runPoll("text", refineId);
-      }
+      setGlbUrl(refinePoll.glbUrl);
+      appendGeneratedGlbToEditLibrary(
+        refinePoll.glbUrl,
+        `Meshy · ${shortPromptLabel(p)}`,
+      );
     } catch (e) {
       setLog(e instanceof Error ? e.message : "error");
     } finally {
@@ -172,33 +124,27 @@ export default function GenerateClient() {
     setBusy(true);
     setLog(null);
     setGlbUrl(null);
+    pollAbort.current?.abort();
+    pollAbort.current = new AbortController();
+    const signal = pollAbort.current.signal;
     try {
       const uri = await fileToDataUrl(file);
-      const res = await fetch("/api/meshy/v1/image-to-3d", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image_url: uri,
-          target_formats: ["glb"],
-          ai_model: "latest",
-          should_texture: true,
-        }),
+      const start = await meshyStartImageTo3d(uri);
+      if (!start.ok) {
+        setLog(start.message);
+        return;
+      }
+
+      const poll = await pollMeshyUntilDone("image", start.taskId, {
+        signal,
+        onProgress: setLog,
       });
-
-      const j = await res.json();
-      if (!res.ok) {
-        setLog(JSON.stringify(j));
+      if (!poll.ok) {
+        setLog(poll.message);
         return;
       }
-
-      const id =
-        typeof j === "object" && j && "result" in j ? String(j.result) : null;
-      if (!id) {
-        setLog("unexpected_meshy_image_response");
-        return;
-      }
-
-      await runPoll("image", id);
+      setGlbUrl(poll.glbUrl);
+      appendGeneratedGlbToEditLibrary(poll.glbUrl, `Meshy · ${file.name}`);
     } catch (e) {
       setLog(e instanceof Error ? e.message : "error");
     } finally {
@@ -212,7 +158,7 @@ export default function GenerateClient() {
   const copyPasteField = () => (
     <>
       <label className="mt-8 block museum-sans text-xs font-semibold uppercase tracking-[0.2em] text-[var(--museum-muted)]">
-        GLB for the edit gallery
+        GLB link
       </label>
       <input
         readOnly
@@ -221,7 +167,8 @@ export default function GenerateClient() {
         placeholder="Generated link appears here"
       />
       <p className="museum-sans mt-2 text-xs text-[var(--museum-muted)]">
-        Paste into <Link href="/edit">Edit home</Link> beside a perch.
+        Saved to <Link href="/edit">Edit home</Link> under Your models automatically;
+        copy the link if you need it elsewhere.
       </p>
     </>
   );
@@ -290,7 +237,7 @@ export default function GenerateClient() {
           <button
             type="button"
             disabled={busy}
-            onClick={onTextGenerate}
+            onClick={() => void onTextGenerate()}
             className="museum-btn-primary museum-sans mt-6 inline-flex min-h-11 rounded-sm px-8 text-sm font-semibold disabled:opacity-50"
           >
             {busy ? "Requesting kiln…" : "Begin preview bake"}

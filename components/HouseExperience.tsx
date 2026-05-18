@@ -9,7 +9,15 @@ import {
   useState,
 } from "react";
 import type { HouseViewMode } from "@/components/HouseViewer";
+import {
+  readStoredAssetLibrary,
+  writeStoredAssetLibrary,
+  type HouseSiteMode,
+  type LibraryItem,
+} from "@/lib/assetLibrary";
 import type { SceneRegistry } from "@/lib/sceneRegistry";
+
+export type { HouseSiteMode } from "@/lib/assetLibrary";
 
 const HouseViewer = dynamic(() => import("@/components/HouseViewer"), {
   ssr: false,
@@ -20,14 +28,28 @@ const HouseViewer = dynamic(() => import("@/components/HouseViewer"), {
   ),
 });
 
-export type HouseSiteMode = "edit" | "walk";
+export type AssetLibrariesState = {
+  models: LibraryItem[];
+  images: LibraryItem[];
+};
 
 export type PlacementPanelContext = {
   registry: SceneRegistry;
   assignments: Record<string, string>;
-  setAssignments: (next: Record<string, string>) => void;
+  setAssignments: (
+    next:
+      | Record<string, string>
+      | ((prev: Record<string, string>) => Record<string, string>),
+  ) => void;
   wallImageSrc: string | null;
   setWallSrc: (next: string | null) => void;
+  modelsLibrary: LibraryItem[];
+  imagesLibrary: LibraryItem[];
+  setAssetLibraries: (
+    next:
+      | AssetLibrariesState
+      | ((prev: AssetLibrariesState) => AssetLibrariesState),
+  ) => void;
 };
 
 export type HouseExperienceProps = {
@@ -38,7 +60,9 @@ export type HouseExperienceProps = {
 const STORAGE_ASSIGNMENTS_KEY = "3d-home:furniture-assignments";
 const STORAGE_WALL_PREFIX = "3d-home:wall-image:";
 
-export function readStoredAssignments(siteMode: HouseSiteMode): Record<string, string> {
+export function readStoredAssignments(
+  siteMode: HouseSiteMode,
+): Record<string, string> {
   if (typeof window === "undefined") return {};
   try {
     const raw = localStorage.getItem(STORAGE_ASSIGNMENTS_KEY);
@@ -57,7 +81,10 @@ function writeStoredAssignments(
   if (typeof window === "undefined") return;
   try {
     const raw = localStorage.getItem(STORAGE_ASSIGNMENTS_KEY);
-    const all = (raw ? JSON.parse(raw) : {}) as Record<string, Record<string, string>>;
+    const all = (raw ? JSON.parse(raw) : {}) as Record<
+      string,
+      Record<string, string>
+    >;
     all[siteMode] = next;
     localStorage.setItem(STORAGE_ASSIGNMENTS_KEY, JSON.stringify(all));
   } catch {
@@ -110,18 +137,31 @@ export default function HouseExperience({
 
   const [wallImageSrc, setWallImageSrcState] = useState<string | null>(null);
 
+  const [assetLibraries, setAssetLibrariesState] = useState<AssetLibrariesState>({
+    models: [],
+    images: [],
+  });
+
   useEffect(() => {
     startTransition(() => {
       setFurnitureAssignments(readStoredAssignments(siteMode));
       setWallImageSrcState(readStoredWall(siteMode));
+      setAssetLibrariesState(readStoredAssetLibrary(siteMode));
     });
   }, [siteMode]);
 
   const setAssignments = useCallback(
-    (next: Record<string, string>) => {
-      setFurnitureAssignments(next);
-      writeStoredAssignments(siteMode, next);
-      window.dispatchEvent(new CustomEvent("house-storage-updated"));
+    (
+      next:
+        | Record<string, string>
+        | ((prev: Record<string, string>) => Record<string, string>),
+    ) => {
+      setFurnitureAssignments((prev) => {
+        const resolved = typeof next === "function" ? next(prev) : next;
+        writeStoredAssignments(siteMode, resolved);
+        window.dispatchEvent(new CustomEvent("house-storage-updated"));
+        return resolved;
+      });
     },
     [siteMode],
   );
@@ -135,11 +175,28 @@ export default function HouseExperience({
     [siteMode],
   );
 
+  const setAssetLibraries = useCallback(
+    (
+      next:
+        | AssetLibrariesState
+        | ((prev: AssetLibrariesState) => AssetLibrariesState),
+    ) => {
+      setAssetLibrariesState((prev) => {
+        const resolved = typeof next === "function" ? next(prev) : next;
+        writeStoredAssetLibrary(siteMode, resolved);
+        window.dispatchEvent(new CustomEvent("house-storage-updated"));
+        return resolved;
+      });
+    },
+    [siteMode],
+  );
+
   useEffect(() => {
     const sync = () => {
       startTransition(() => {
         setFurnitureAssignments(readStoredAssignments(siteMode));
         setWallImageSrcState(readStoredWall(siteMode));
+        setAssetLibrariesState(readStoredAssetLibrary(siteMode));
       });
     };
     window.addEventListener("storage", sync);
@@ -164,6 +221,9 @@ export default function HouseExperience({
           setAssignments,
           wallImageSrc,
           setWallSrc,
+          modelsLibrary: assetLibraries.models,
+          imagesLibrary: assetLibraries.images,
+          setAssetLibraries,
         }
       : null;
 
@@ -180,8 +240,8 @@ export default function HouseExperience({
       </div>
 
       {placementContext && placementPanel ? (
-        <div className="pointer-events-none absolute left-0 top-0 z-20 flex max-h-full w-full max-w-full justify-start p-3 sm:max-w-sm">
-          <div className="pointer-events-auto max-h-[min(88dvh,42rem)] w-full overflow-y-auto rounded-sm border border-[var(--museum-rule)] bg-[var(--museum-parchment)]/95 p-4 shadow-sm backdrop-blur-sm">
+        <div className="pointer-events-none absolute inset-y-0 left-0 z-20 flex max-h-full items-stretch p-3">
+          <div className="pointer-events-auto flex h-full max-h-full w-[min(22rem,calc(100vw-1.5rem))] min-w-[16.5rem] max-w-[40rem] resize-x flex-col overflow-hidden rounded-sm border border-[var(--museum-rule)] bg-[var(--museum-parchment)]/95 shadow-sm backdrop-blur-sm">
             {placementPanel(placementContext)}
           </div>
         </div>

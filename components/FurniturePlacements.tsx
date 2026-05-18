@@ -1,12 +1,17 @@
 "use client";
 
-import { Suspense, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useThree } from "@react-three/fiber";
-import { useGLTF } from "@react-three/drei";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import * as THREE from "three";
 
 import { viewerModelSrc } from "@/lib/modelUrl";
 
+/**
+ * Loads placed GLBs outside drei's useGLTF so progress updates from these models
+ * do not synchronously notify useProgress during render (React 19 / R3F: avoids
+ * "Cannot update LoadingReporter while rendering OnePlacement").
+ */
 function OnePlacement({
   anchor,
   url,
@@ -14,9 +19,36 @@ function OnePlacement({
   anchor?: THREE.Object3D;
   url: string;
 }) {
-  const { scene } = useGLTF(url);
+  const [scene, setScene] = useState<THREE.Group | null>(null);
   const wrapper = useRef<THREE.Group>(null);
   const { invalidate } = useThree();
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolved = viewerModelSrc(url);
+    const loader = new GLTFLoader();
+
+    loader.load(
+      resolved,
+      (gltf) => {
+        if (!cancelled) {
+          setScene(gltf.scene);
+          invalidate();
+        }
+      },
+      undefined,
+      () => {
+        if (!cancelled) {
+          setScene(null);
+          invalidate();
+        }
+      },
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [url, invalidate]);
 
   useEffect(() => {
     if (!anchor || !scene || !wrapper.current) return;
@@ -68,12 +100,11 @@ export function FurniturePlacements({
   return (
     <>
       {entries.map(([slotId, rawUrl]) => (
-        <Suspense key={`${slotId}:${rawUrl.slice(0, 120)}`} fallback={null}>
-          <OnePlacement
-            anchor={anchors.get(slotId)}
-            url={viewerModelSrc(rawUrl)}
-          />
-        </Suspense>
+        <OnePlacement
+          key={`${slotId}:${rawUrl.slice(0, 120)}`}
+          anchor={anchors.get(slotId)}
+          url={rawUrl}
+        />
       ))}
     </>
   );

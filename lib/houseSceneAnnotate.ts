@@ -5,13 +5,14 @@ import type { SceneRegistry } from "@/lib/sceneRegistry";
 const SLOT_PATTERN = /^slot[_-]/i;
 
 const FLOOR_LIKE =
-  /\b(floor|deck|stairs|steps?|tiles?|tile|hardwood|carpet|porch|rug|parquet|plank)\b/i;
+  /\b(floor|deck|stairs|steps?|tiles?|tile|hardwood|carpet|porch|rug|parquet|plank|balcony|terrace|patio|platform|concrete|cement|slab|marble|grounds?)\b/i;
 const NEVER_FLOOR = /\b(ceiling|wall|roof)\b/i;
 const SOFT_OR_TOP_SURFACE =
   /\b(bed|cushion|mattress|pillow|sofa|loveseat|couch|armchair|chair|stool|bench|tabletop|\btable\b|desk|counter|cabinet\b|dresser|shelf|mirror|pane|cloth)\b/i;
 
+/** Omit generic `door` — thin door meshes block horizontal casts through openings. */
 const OCC_LIKE =
-  /\b(wall|partition|divider|roof|fence|pillar|pole|beam|door|window|pane|mirror|brick|drywall)\b/i;
+  /\b(wall|partition|divider|roof|fence|pillar|pole|beam|window|pane|mirror|brick|drywall)\b/i;
 
 export type SceneAnnotationMaps = {
   registry: SceneRegistry;
@@ -96,12 +97,22 @@ function annotateMeshWalkOcclude(mesh: THREE.Mesh) {
   mesh.userData.occluder = occ;
 }
 
+export const HOUSE_SCENE_ANNOTATION_REV = 2;
+
 /**
  * Traverse a loaded architectural GLB, tag meshes, collect slot anchors & strict-walk masks.
  */
 export function annotateHouseScene(scene: THREE.Object3D): SceneAnnotationMaps {
-  const ud = scene.userData as { meshyHouseMaps?: SceneAnnotationMaps };
-  if (ud.meshyHouseMaps) return ud.meshyHouseMaps;
+  const ud = scene.userData as {
+    meshyHouseMaps?: SceneAnnotationMaps;
+    meshyAnnotateRev?: number;
+  };
+  if (
+    ud.meshyAnnotateRev === HOUSE_SCENE_ANNOTATION_REV &&
+    ud.meshyHouseMaps
+  ) {
+    return ud.meshyHouseMaps;
+  }
 
   ensureFallbackAnchors(scene);
 
@@ -140,5 +151,6 @@ export function annotateHouseScene(scene: THREE.Object3D): SceneAnnotationMaps {
     furnitureMeshUuids,
   };
   ud.meshyHouseMaps = maps;
+  ud.meshyAnnotateRev = HOUSE_SCENE_ANNOTATION_REV;
   return maps;
 }

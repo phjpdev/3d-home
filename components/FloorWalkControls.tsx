@@ -16,10 +16,31 @@ const KEY_TRANSIT_MS = 640;
 
 export type SurfacePolicy = {
   walkStrict: boolean;
-  walkWhitelistUuids: ReadonlySet<string>;
   occluderUuids: ReadonlySet<string>;
   furnitureUuids: ReadonlySet<string>;
 };
+
+function downwardWalkableFloorY(
+  sceneRoot: THREE.Object3D,
+  caster: THREE.Raycaster,
+  xz: THREE.Vector3,
+  probeTopY: number,
+  floorMinY: number,
+  floorMaxY: number,
+  policy: SurfacePolicy,
+): number | null {
+  caster.set(new THREE.Vector3(xz.x, probeTopY, xz.z), new THREE.Vector3(0, -1, 0));
+  const hits = caster.intersectObject(sceneRoot, true);
+  const hit = pickWalkableFloorHit(
+    hits,
+    xz,
+    floorMinY,
+    floorMaxY,
+    96,
+    policy,
+  );
+  return hit ? hit.point.y : null;
+}
 
 function placementAllowed(hit: THREE.Intersection, policy: SurfacePolicy): boolean {
   if (!policy.walkStrict) return true;
@@ -27,11 +48,8 @@ function placementAllowed(hit: THREE.Intersection, policy: SurfacePolicy): boole
   const obj = hit.object as THREE.Mesh;
   if (!obj.isMesh) return false;
   const uuid = obj.uuid;
-
-  const { walkWhitelistUuids, furnitureUuids } = policy;
-  if (walkWhitelistUuids.size > 0) return walkWhitelistUuids.has(uuid);
-
-  return !furnitureUuids.has(uuid);
+  if (policy.furnitureUuids.has(uuid)) return false;
+  return true;
 }
 
 function ancestorHasUuid(
@@ -68,6 +86,8 @@ function horizontalClearTowardDest(
   const limit = len + 0.12;
   for (const h of hits) {
     if (h.distance > limit) break;
+    /** Ignore skin hits at the ray origin — thin trims / posts */
+    if (h.distance < 0.09) continue;
     if (!h.object.visible) continue;
     if (ancestorHasUuid(h.object, occluders)) return false;
   }
@@ -109,25 +129,34 @@ function pickWalkableFloorHit(
 function canStandAtPosition(
   sceneRoot: THREE.Object3D,
   caster: THREE.Raycaster,
+  camPos: THREE.Vector3,
   dest: THREE.Vector3,
-  eyeY: number,
   floorMinY: number,
   floorMaxY: number,
   policy: SurfacePolicy,
 ): boolean {
-  const origin = new THREE.Vector3(dest.x, eyeY + 2.2, dest.z);
-  caster.set(origin, new THREE.Vector3(0, -1, 0));
-  const hits = caster.intersectObject(sceneRoot, true);
-  const hit = pickWalkableFloorHit(
-    hits,
-    dest,
+  /** Sample walkable slabs under avatar feet vs planned step — avoids comparing eye Y to floor Y. */
+  const probeTopY = camPos.y + 2.4;
+  const curFloorY = downwardWalkableFloorY(
+    sceneRoot,
+    caster,
+    new THREE.Vector3(camPos.x, 0, camPos.z),
+    probeTopY,
     floorMinY,
     floorMaxY,
-    0.65,
     policy,
   );
-  if (!hit) return false;
-  return Math.abs(hit.point.y - eyeY) < 0.62;
+  const destFloorY = downwardWalkableFloorY(
+    sceneRoot,
+    caster,
+    new THREE.Vector3(dest.x, 0, dest.z),
+    probeTopY,
+    floorMinY,
+    floorMaxY,
+    policy,
+  );
+  if (curFloorY === null || destFloorY === null) return false;
+  return Math.abs(destFloorY - curFloorY) < 1.28;
 }
 
 function easeInOutCubic(t: number) {
@@ -154,7 +183,6 @@ export type FloorWalkControlsProps = {
   sceneRoot: THREE.Object3D;
   doorstepPose: DoorstepPose;
   walkStrict?: boolean;
-  walkWhitelistUuids?: ReadonlySet<string>;
   occluderUuids?: ReadonlySet<string>;
   furnitureUuids?: ReadonlySet<string>;
 };
@@ -163,7 +191,6 @@ export function FloorWalkControls({
   sceneRoot,
   doorstepPose,
   walkStrict = false,
-  walkWhitelistUuids = new Set(),
   occluderUuids = new Set(),
   furnitureUuids = new Set(),
 }: FloorWalkControlsProps) {
@@ -189,14 +216,12 @@ export function FloorWalkControls({
 
   const policyRef = useRef<SurfacePolicy>({
     walkStrict,
-    walkWhitelistUuids,
     occluderUuids,
     furnitureUuids,
   });
 
   policyRef.current = {
     walkStrict,
-    walkWhitelistUuids,
     occluderUuids,
     furnitureUuids,
   };
@@ -247,8 +272,8 @@ export function FloorWalkControls({
         !canStandAtPosition(
           sceneRoot,
           raycaster.current,
+          camPos,
           dest,
-          camPos.y,
           floorMinY,
           floorMaxY,
           policy,

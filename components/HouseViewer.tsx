@@ -8,7 +8,7 @@ import * as THREE from "three";
 import type { ResolvedWaypoint } from "@/data/waypoints";
 import type { SceneAnnotationMaps } from "@/lib/houseSceneAnnotate";
 import { computeDoorstepPose } from "@/lib/doorstepPose";
-import { EMPTY_UUID_SET } from "@/lib/emptyUuidSet";
+import type { OrbitRoomId } from "@/lib/roomOrbitPresets";
 import type { SceneRegistry } from "@/lib/sceneRegistry";
 import { DoorstepCamera } from "./DoorstepCamera";
 import { FloorWalkControls } from "./FloorWalkControls";
@@ -23,6 +23,8 @@ export type HouseViewerProps = {
   walkStrict?: boolean;
   furnitureAssignments?: Record<string, string>;
   wallImageSrc?: string | null;
+  orbitRoomId?: OrbitRoomId;
+  orbitRoomRevision?: number;
   currentWaypointId?: string;
   onWaypointMap?: (map: Map<string, ResolvedWaypoint>) => void;
   onRegistry?: (info: { registry: SceneRegistry }) => void;
@@ -49,6 +51,8 @@ export default function HouseViewer({
   walkStrict = false,
   furnitureAssignments = {},
   wallImageSrc = null,
+  orbitRoomId = "hallway",
+  orbitRoomRevision = 0,
   onWaypointMap,
   onRegistry,
 }: HouseViewerProps = {}) {
@@ -58,7 +62,6 @@ export default function HouseViewer({
   );
 
   type WalkSets = {
-    walk: ReadonlySet<string>;
     occluder: ReadonlySet<string>;
     furniture: ReadonlySet<string>;
   };
@@ -105,7 +108,6 @@ export default function HouseViewer({
     (maps: SceneAnnotationMaps) => {
       setAnchors(new Map(maps.anchors));
       setWalkSets({
-        walk: maps.walkableMeshUuids,
         occluder: maps.occluderMeshUuids,
         furniture: maps.furnitureMeshUuids,
       });
@@ -126,9 +128,8 @@ export default function HouseViewer({
 
   const pct = Math.round(loadProgress.progress);
 
-  const walkWhitelistStable = walkSets?.walk ?? EMPTY_UUID_SET;
-  const occluderStable = walkSets?.occluder ?? EMPTY_UUID_SET;
-  const furnitureStable = walkSets?.furniture ?? EMPTY_UUID_SET;
+  const occluderStable = walkSets?.occluder ?? new Set<string>();
+  const furnitureStable = walkSets?.furniture ?? new Set<string>();
 
   return (
     <div className="relative h-full w-full bg-[var(--museum-parchment)]">
@@ -194,6 +195,8 @@ export default function HouseViewer({
           <DoorstepCamera
             scene={sceneRoot}
             onPositioned={handleCameraPositioned}
+            orbitRoomId={orbitRoomId}
+            orbitRoomRevision={orbitRoomRevision}
           />
         ) : null}
 
@@ -202,7 +205,6 @@ export default function HouseViewer({
             sceneRoot={sceneRoot}
             doorstepPose={doorstepPose}
             walkStrict={walkStrict}
-            walkWhitelistUuids={walkWhitelistStable}
             occluderUuids={occluderStable}
             furnitureUuids={furnitureStable}
           />
