@@ -49,6 +49,8 @@ yarn-error.log*
 
 # 3D models (often large binaries; distribute separately or via CDN/LFS if needed)
 *.glb
+house2test.glb
+public/house2test.glb
 
 # typescript
 *.tsbuildinfo
