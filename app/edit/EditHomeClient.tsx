@@ -2,9 +2,10 @@
 
 import dynamicImport from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import type { PlacementPanelContext } from "@/components/HouseExperience";
 import HouseExperience from "@/components/HouseExperience";
+import { ModelAdjustControls } from "@/components/ModelAdjustControls";
 import { WallPictureAdjustControls } from "@/components/WallPictureAdjustControls";
 import {
   normalizedIndexedDbPlacementRef,
@@ -12,6 +13,7 @@ import {
   refsMatchingLibraryItem,
   type LibraryItem,
 } from "@/lib/assetLibrary";
+import type { ModelPlacement } from "@/lib/modelPlacement";
 import type { WallPicturePlacement } from "@/lib/wallPicturePlacement";
 import { deleteVaultAsset, putVaultAsset } from "@/lib/assetVaultIdb";
 import { viewerModelSrc } from "@/lib/modelUrl";
@@ -33,18 +35,6 @@ function placementStoredRef(it: LibraryItem): string {
     : it.src;
 }
 
-function stripAssignmentsForLibraryItem(
-  assignments: Record<string, string>,
-  item: LibraryItem,
-): Record<string, string> {
-  const next = { ...assignments };
-  const refs = new Set(refsMatchingLibraryItem(item));
-  for (const [k, v] of Object.entries(next)) {
-    if (refs.has(v)) delete next[k];
-  }
-  return next;
-}
-
 function revokeObjectUrlMaybe(src: string) {
   if (src.startsWith("blob:")) URL.revokeObjectURL(src);
 }
@@ -59,6 +49,16 @@ function wallPlacementLabel(
   return item?.label ?? "Wall picture";
 }
 
+function modelPlacementLabel(
+  placement: ModelPlacement,
+  models: LibraryItem[],
+): string {
+  const item = models.find((m) =>
+    refsMatchingLibraryItem(m).includes(placement.modelRef),
+  );
+  return item?.label ?? "3D model";
+}
+
 function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const r = new FileReader();
@@ -70,17 +70,23 @@ function fileToDataUrl(file: File) {
 
 function EditPanel(context: PlacementPanelContext) {
   const {
-    registry,
-    setAssignments,
     wallPlacements,
     setWallPlacements,
     selectedWallPlacementId,
     setSelectedWallPlacementId,
     nudgeSelectedWallPlacement,
     scaleSelectedWallPlacement,
-    removeSelectedWallPlacement,
     removeWallPlacement,
     setPendingWallImage,
+    modelPlacements,
+    setModelPlacements,
+    selectedModelPlacementId,
+    setSelectedModelPlacementId,
+    nudgeSelectedModelPlacement,
+    rotateSelectedModelPlacement,
+    scaleSelectedModelPlacement,
+    removeModelPlacement,
+    setPendingModelRef,
     modelsLibrary,
     imagesLibrary,
     setAssetLibraries,
@@ -91,18 +97,8 @@ function EditPanel(context: PlacementPanelContext) {
   const [editTab, setEditTab] = useState<EditTab>("model");
 
   const [previewItem, setPreviewItem] = useState<LibraryItem | null>(null);
-  const [placeSlotId, setPlaceSlotId] = useState("");
   const [glbReading, setGlbReading] = useState(false);
   const [pictureReading, setPictureReading] = useState(false);
-
-  useEffect(() => {
-    if (!previewItem || previewItem.kind !== "glb") return;
-    const first = registry.slots[0]?.id ?? "";
-    setPlaceSlotId((prev) => {
-      if (prev && registry.slots.some((s) => s.id === prev)) return prev;
-      return first;
-    });
-  }, [previewItem, registry.slots]);
 
   const addLibraryItem = useCallback(
     (item: LibraryItem) => {
@@ -126,11 +122,13 @@ function EditPanel(context: PlacementPanelContext) {
         );
       }
       if (item.kind === "glb") {
+        setModelPlacements((prev) =>
+          prev.filter((p) => !refs.has(p.modelRef)),
+        );
         setAssetLibraries((prev) => ({
           models: prev.models.filter((m) => m.id !== item.id),
           images: prev.images,
         }));
-        setAssignments((prev) => stripAssignmentsForLibraryItem(prev, item));
       } else {
         setAssetLibraries((prev) => ({
           models: prev.models,
@@ -138,7 +136,7 @@ function EditPanel(context: PlacementPanelContext) {
         }));
       }
     },
-    [setAssetLibraries, setAssignments, setWallPlacements],
+    [setAssetLibraries, setWallPlacements, setModelPlacements],
   );
 
   const onUploadGlb = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -222,10 +220,7 @@ function EditPanel(context: PlacementPanelContext) {
   const onModalPlace = () => {
     if (!previewItem) return;
     if (previewItem.kind === "glb") {
-      const sid = placeSlotId || registry.slots[0]?.id;
-      if (!sid) return;
-      const ref = placementStoredRef(previewItem);
-      setAssignments((prev) => ({ ...prev, [sid]: ref }));
+      setPendingModelRef(placementStoredRef(previewItem));
     } else {
       setPendingWallImage(placementStoredRef(previewItem));
     }
@@ -265,25 +260,9 @@ function EditPanel(context: PlacementPanelContext) {
                 <div className="mt-3">
                   <GlbPreview url={viewerModelSrc(previewItem.src)} />
                 </div>
-                <label className="mt-4 block text-[10px] uppercase tracking-[0.16em] text-[var(--museum-muted)]">
-                  Place on perch
-                </label>
-                <select
-                  className="museum-sans mt-1 w-full rounded-sm border border-[var(--museum-rule)] bg-transparent px-2 py-2 text-xs outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--museum-brass)]"
-                  value={placeSlotId}
-                  onChange={(e) => setPlaceSlotId(e.target.value)}
-                  disabled={registry.slots.length === 0}
-                >
-                  {registry.slots.length === 0 ? (
-                    <option value="">No slots yet</option>
-                  ) : (
-                    registry.slots.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.label} ({s.id})
-                      </option>
-                    ))
-                  )}
-                </select>
+                <p className="museum-sans mt-3 text-[11px] leading-relaxed text-[var(--museum-muted)]">
+                  Place opens the scene — click the floor, table, chair, or another flat surface where the model should sit.
+                </p>
               </>
             ) : (
               <>
@@ -319,10 +298,7 @@ function EditPanel(context: PlacementPanelContext) {
             <button
               type="button"
               onClick={onModalPlace}
-              disabled={
-                previewItem.kind === "glb" && registry.slots.length === 0
-              }
-              className="museum-btn-primary museum-sans min-h-10 flex-[1.2] rounded-sm px-3 text-xs font-semibold disabled:opacity-45"
+              className="museum-btn-primary museum-sans min-h-10 flex-[1.2] rounded-sm px-3 text-xs font-semibold"
             >
               Place
             </button>
@@ -337,7 +313,7 @@ function EditPanel(context: PlacementPanelContext) {
       <header className="flex-shrink-0 px-4 pb-2 pt-3">
         <h2 className="museum-serif text-base sm:text-lg">Staging room</h2>
         <p className="mt-1 text-[10px] leading-relaxed text-[var(--museum-muted)] sm:text-[11px]">
-          Models from <Link href="/generate" className="underline decoration-[var(--museum-brass-dark)]">Generate</Link>, uploads, and perches · hang likeness on plaster.
+          Models from <Link href="/generate" className="underline decoration-[var(--museum-brass-dark)]">Generate</Link>, uploads, and click-to-place on floor or furniture · hang likeness on plaster.
         </p>
       </header>
 
@@ -450,6 +426,52 @@ function EditPanel(context: PlacementPanelContext) {
                   Loading file into memory…
                 </p>
               ) : null}
+            </div>
+
+            <div>
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--museum-muted)]">
+                In the scene
+              </h3>
+              {modelPlacements.length === 0 ? (
+                <p className="mt-2 text-[11px] text-[var(--museum-muted)]">
+                  No models placed yet — pick one above, then Place on a surface.
+                </p>
+              ) : (
+                <ul className="mt-2 space-y-2">
+                  {modelPlacements.map((placement) => {
+                    const selected = placement.id === selectedModelPlacementId;
+                    return (
+                      <li
+                        key={placement.id}
+                        className={`rounded-sm border px-2 py-2 ${
+                          selected
+                            ? "border-[var(--museum-brass-dark)]/50 bg-[var(--museum-brass)]/10"
+                            : "border-[var(--museum-rule)]"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          className="w-full text-left text-xs font-medium text-[var(--museum-ink)]"
+                          onClick={() => setSelectedModelPlacementId(placement.id)}
+                        >
+                          {modelPlacementLabel(placement, modelsLibrary)}
+                        </button>
+                        {selected ? (
+                          <div className="mt-2 border-t border-[var(--museum-rule)] pt-2">
+                            <ModelAdjustControls
+                              compact
+                              onNudge={nudgeSelectedModelPlacement}
+                              onRotate={rotateSelectedModelPlacement}
+                              onScale={scaleSelectedModelPlacement}
+                              onRemove={() => removeModelPlacement(placement.id)}
+                            />
+                          </div>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </div>
           </section>
         ) : (

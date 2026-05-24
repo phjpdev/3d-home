@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import type { HouseViewMode } from "@/components/HouseViewer";
+import { ModelAdjustControls } from "@/components/ModelAdjustControls";
 import { WallPictureAdjustControls } from "@/components/WallPictureAdjustControls";
 import {
   hydrateAssetLibraryFromVault,
@@ -33,6 +34,17 @@ import {
   writeStoredWallPlacements,
   type WallPicturePlacement,
 } from "@/lib/wallPicturePlacement";
+import {
+  MODEL_SCALE_FACTOR,
+  newModelPlacementId,
+  nudgeModelPlacement,
+  readStoredModelPlacements,
+  rotateModelPlacement,
+  scaleModelPlacement,
+  writeStoredModelPlacements,
+  type ModelAxis,
+  type ModelPlacement,
+} from "@/lib/modelPlacement";
 
 export type { HouseSiteMode } from "@/lib/assetLibrary";
 
@@ -72,6 +84,28 @@ export type PlacementPanelContext = {
   removeWallPlacement: (id: string) => void;
   pendingWallImage: string | null;
   setPendingWallImage: (next: string | null) => void;
+  modelPlacements: ModelPlacement[];
+  setModelPlacements: (
+    next:
+      | ModelPlacement[]
+      | ((prev: ModelPlacement[]) => ModelPlacement[]),
+  ) => void;
+  selectedModelPlacementId: string | null;
+  setSelectedModelPlacementId: (next: string | null) => void;
+  nudgeSelectedModelPlacement: (
+    deltaX: number,
+    deltaY: number,
+    deltaZ: number,
+  ) => void;
+  rotateSelectedModelPlacement: (axis: ModelAxis, sign: 1 | -1) => void;
+  scaleSelectedModelPlacement: (
+    axis: ModelAxis | "uniform",
+    zoomIn: boolean,
+  ) => void;
+  removeSelectedModelPlacement: () => void;
+  removeModelPlacement: (id: string) => void;
+  pendingModelRef: string | null;
+  setPendingModelRef: (next: string | null) => void;
   modelsLibrary: LibraryItem[];
   imagesLibrary: LibraryItem[];
   setAssetLibraries: (
@@ -180,6 +214,19 @@ export default function HouseExperience({
   );
   const [pendingWallAspect, setPendingWallAspect] = useState(4 / 3);
   const [placementMissNotice, setPlacementMissNotice] = useState(false);
+  const [modelPlacementMissNotice, setModelPlacementMissNotice] = useState(false);
+
+  const [modelPlacements, setModelPlacementsState] = useState<ModelPlacement[]>(
+    [],
+  );
+
+  const [selectedModelPlacementId, setSelectedModelPlacementIdState] = useState<
+    string | null
+  >(null);
+
+  const [pendingModelRef, setPendingModelRefState] = useState<string | null>(
+    null,
+  );
 
   const [assetLibraries, setAssetLibrariesState] = useState<AssetLibrariesState>({
     models: [],
@@ -199,6 +246,7 @@ export default function HouseExperience({
     startTransition(() => {
       setFurnitureAssignments(readStoredAssignments(siteMode));
       setWallPlacementsState(readStoredWallPlacements(siteMode));
+      setModelPlacementsState(readStoredModelPlacements(siteMode));
     });
 
     void (async () => {
@@ -214,6 +262,7 @@ export default function HouseExperience({
           startTransition(() => {
             setAssetLibrariesState(hydrated);
             setWallPlacementsState(readStoredWallPlacements(siteMode));
+            setModelPlacementsState(readStoredModelPlacements(siteMode));
           });
         }
       } catch {
@@ -221,6 +270,7 @@ export default function HouseExperience({
           startTransition(() => {
             setAssetLibrariesState(meta);
             setWallPlacementsState(readStoredWallPlacements(siteMode));
+            setModelPlacementsState(readStoredModelPlacements(siteMode));
           });
         }
       }
@@ -261,8 +311,29 @@ export default function HouseExperience({
     [siteMode],
   );
 
+  const setModelPlacements = useCallback(
+    (
+      next:
+        | ModelPlacement[]
+        | ((prev: ModelPlacement[]) => ModelPlacement[]),
+    ) => {
+      setModelPlacementsState((prev) => {
+        const resolved = typeof next === "function" ? next(prev) : next;
+        writeStoredModelPlacements(siteMode, resolved);
+        return resolved;
+      });
+    },
+    [siteMode],
+  );
+
   const setSelectedWallPlacementId = useCallback((next: string | null) => {
     setSelectedWallPlacementIdState(next);
+    if (next) setSelectedModelPlacementIdState(null);
+  }, []);
+
+  const setSelectedModelPlacementId = useCallback((next: string | null) => {
+    setSelectedModelPlacementIdState(next);
+    if (next) setSelectedWallPlacementIdState(null);
   }, []);
 
   const nudgeSelectedWallPlacement = useCallback(
@@ -310,18 +381,96 @@ export default function HouseExperience({
     [setWallPlacements],
   );
 
+  const nudgeSelectedModelPlacement = useCallback(
+    (deltaX: number, deltaY: number, deltaZ: number) => {
+      if (!selectedModelPlacementId) return;
+      setModelPlacements((prev) =>
+        prev.map((p) =>
+          p.id === selectedModelPlacementId
+            ? nudgeModelPlacement(p, deltaX, deltaY, deltaZ)
+            : p,
+        ),
+      );
+    },
+    [selectedModelPlacementId, setModelPlacements],
+  );
+
+  const rotateSelectedModelPlacement = useCallback(
+    (axis: ModelAxis, sign: 1 | -1) => {
+      if (!selectedModelPlacementId) return;
+      setModelPlacements((prev) =>
+        prev.map((p) =>
+          p.id === selectedModelPlacementId
+            ? rotateModelPlacement(p, axis, sign)
+            : p,
+        ),
+      );
+    },
+    [selectedModelPlacementId, setModelPlacements],
+  );
+
+  const scaleSelectedModelPlacement = useCallback(
+    (axis: ModelAxis | "uniform", zoomIn: boolean) => {
+      if (!selectedModelPlacementId) return;
+      const factor = zoomIn ? MODEL_SCALE_FACTOR : 1 / MODEL_SCALE_FACTOR;
+      setModelPlacements((prev) =>
+        prev.map((p) =>
+          p.id === selectedModelPlacementId
+            ? scaleModelPlacement(p, axis, factor)
+            : p,
+        ),
+      );
+    },
+    [selectedModelPlacementId, setModelPlacements],
+  );
+
+  const removeSelectedModelPlacement = useCallback(() => {
+    if (!selectedModelPlacementId) return;
+    setModelPlacements((prev) =>
+      prev.filter((p) => p.id !== selectedModelPlacementId),
+    );
+    setSelectedModelPlacementIdState(null);
+  }, [selectedModelPlacementId, setModelPlacements]);
+
+  const removeModelPlacement = useCallback(
+    (id: string) => {
+      setModelPlacements((prev) => prev.filter((p) => p.id !== id));
+      setSelectedModelPlacementIdState((prev) => (prev === id ? null : prev));
+    },
+    [setModelPlacements],
+  );
+
   const setPendingWallImage = useCallback(
     (next: string | null) => {
       setPendingWallImageState(next);
       setPlacementMissNotice(false);
       if (next) {
         setSelectedWallPlacementIdState(null);
+        setSelectedModelPlacementIdState(null);
+        setPendingModelRefState(null);
+        setModelPlacementMissNotice(false);
         const fb = libraryBlobFallbackForRef(next, assetLibraries.images);
         void loadImageAspect(next, fb ? [fb] : []).then(setPendingWallAspect);
       }
     },
     [assetLibraries.images],
   );
+
+  const setPendingModelRef = useCallback((next: string | null) => {
+    setPendingModelRefState(next);
+    setModelPlacementMissNotice(false);
+    if (next) {
+      setSelectedModelPlacementIdState(null);
+      setSelectedWallPlacementIdState(null);
+      setPendingWallImageState(null);
+      setPlacementMissNotice(false);
+    }
+  }, []);
+
+  const cancelModelPlacement = useCallback(() => {
+    setPendingModelRefState(null);
+    setModelPlacementMissNotice(false);
+  }, []);
 
   const cancelWallPlacement = useCallback(() => {
     setPendingWallImageState(null);
@@ -341,6 +490,21 @@ export default function HouseExperience({
 
   const handleWallPlacementMissed = useCallback(() => {
     setPlacementMissNotice(true);
+  }, []);
+
+  const handleModelPlaced = useCallback(
+    (placement: Omit<ModelPlacement, "id">) => {
+      const id = newModelPlacementId();
+      setModelPlacements((prev) => [...prev, { ...placement, id }]);
+      setSelectedModelPlacementIdState(id);
+      setPendingModelRefState(null);
+      setModelPlacementMissNotice(false);
+    },
+    [setModelPlacements],
+  );
+
+  const handleModelPlacementMissed = useCallback(() => {
+    setModelPlacementMissNotice(true);
   }, []);
 
   const setAssetLibraries = useCallback(
@@ -384,11 +548,13 @@ export default function HouseExperience({
           startTransition(() => {
             setAssetLibrariesState(hydrated);
             setWallPlacementsState(readStoredWallPlacements(siteMode));
+            setModelPlacementsState(readStoredModelPlacements(siteMode));
           });
         } catch {
           startTransition(() => {
             setAssetLibrariesState(meta);
             setWallPlacementsState(readStoredWallPlacements(siteMode));
+            setModelPlacementsState(readStoredModelPlacements(siteMode));
           });
         }
       })();
@@ -430,6 +596,17 @@ export default function HouseExperience({
           removeWallPlacement,
           pendingWallImage,
           setPendingWallImage,
+          modelPlacements,
+          setModelPlacements,
+          selectedModelPlacementId,
+          setSelectedModelPlacementId,
+          nudgeSelectedModelPlacement,
+          rotateSelectedModelPlacement,
+          scaleSelectedModelPlacement,
+          removeSelectedModelPlacement,
+          removeModelPlacement,
+          pendingModelRef,
+          setPendingModelRef,
           modelsLibrary: assetLibraries.models,
           imagesLibrary: assetLibraries.images,
           setAssetLibraries,
@@ -444,18 +621,26 @@ export default function HouseExperience({
         <HouseViewer
           viewMode={viewMode}
           walkStrict={walkStrict}
-          furnitureAssignments={furnitureAssignments}
+          furnitureAssignments={siteMode === "edit" ? {} : furnitureAssignments}
           wallPlacements={wallPlacements}
           imagesLibrary={assetLibraries.images}
+          modelsLibrary={assetLibraries.models}
+          modelPlacements={modelPlacements}
           pendingWallImage={pendingWallImage}
           pendingWallAspect={pendingWallAspect}
           pendingImageFallbacks={pendingImageFallbacks}
+          pendingModelRef={pendingModelRef}
           onWallPlaced={handleWallPlaced}
           onCancelWallPlacement={cancelWallPlacement}
           onWallPlacementMissed={handleWallPlacementMissed}
-          wallPictureSelectActive={siteMode === "edit"}
+          onModelPlaced={handleModelPlaced}
+          onCancelModelPlacement={cancelModelPlacement}
+          onModelPlacementMissed={handleModelPlacementMissed}
+          editPlacementActive={siteMode === "edit"}
           selectedWallPlacementId={selectedWallPlacementId}
           onWallPlacementSelect={setSelectedWallPlacementId}
+          selectedModelPlacementId={selectedModelPlacementId}
+          onModelPlacementSelect={setSelectedModelPlacementId}
           onRegistry={handleRegistry}
         />
       </div>
@@ -481,9 +666,31 @@ export default function HouseExperience({
         </div>
       ) : null}
 
+      {pendingModelRef ? (
+        <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3">
+          <div className="pointer-events-auto flex max-w-md flex-wrap items-center justify-center gap-2 rounded-sm border border-[var(--museum-brass-dark)]/40 bg-[var(--museum-parchment)]/96 px-4 py-2.5 text-center shadow-md backdrop-blur-sm">
+            <p className="museum-sans text-xs font-medium text-[var(--museum-ink)] sm:text-sm">
+              {modelPlacementMissNotice
+                ? "That click missed a surface — try the floor, table, or another flat top"
+                : viewMode === "walk"
+                  ? "Click the floor or a surface · drag to look around"
+                  : "Click the floor or a surface · right-drag to orbit · scroll to zoom"}
+            </p>
+            <button
+              type="button"
+              onClick={cancelModelPlacement}
+              className="museum-sans rounded-sm border border-[var(--museum-rule)] px-2.5 py-1 text-[11px] font-semibold text-[var(--museum-ink)] hover:bg-black/[0.04]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {siteMode === "edit" &&
       selectedWallPlacementId &&
-      !pendingWallImage ? (
+      !pendingWallImage &&
+      !pendingModelRef ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-[max(4.75rem,env(safe-area-inset-bottom))] z-30 flex justify-center px-3">
           <div className="pointer-events-auto relative w-full max-w-md rounded-sm border border-[var(--museum-brass-dark)]/40 bg-[var(--museum-parchment)]/96 px-3 py-2.5 shadow-md backdrop-blur-sm">
             <button
@@ -502,6 +709,34 @@ export default function HouseExperience({
               onNudge={nudgeSelectedWallPlacement}
               onZoom={scaleSelectedWallPlacement}
               onRemove={removeSelectedWallPlacement}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {siteMode === "edit" &&
+      selectedModelPlacementId &&
+      !pendingModelRef &&
+      !pendingWallImage ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-[max(4.75rem,env(safe-area-inset-bottom))] z-30 flex justify-center px-3">
+          <div className="pointer-events-auto relative w-full max-w-md rounded-sm border border-[var(--museum-brass-dark)]/40 bg-[var(--museum-parchment)]/96 px-3 py-2.5 shadow-md backdrop-blur-sm">
+            <button
+              type="button"
+              aria-label="Close adjust panel"
+              onClick={() => setSelectedModelPlacementId(null)}
+              className="museum-sans absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-sm text-lg leading-none text-[var(--museum-muted)] transition hover:bg-black/[0.06] hover:text-[var(--museum-ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--museum-brass)]"
+            >
+              ×
+            </button>
+            <p className="museum-sans mb-2 pr-8 text-center text-[11px] font-medium text-[var(--museum-ink)] sm:text-xs">
+              Adjust model · click to select
+            </p>
+            <ModelAdjustControls
+              compact
+              onNudge={nudgeSelectedModelPlacement}
+              onRotate={rotateSelectedModelPlacement}
+              onScale={scaleSelectedModelPlacement}
+              onRemove={removeSelectedModelPlacement}
             />
           </div>
         </div>

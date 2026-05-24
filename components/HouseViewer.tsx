@@ -15,7 +15,12 @@ import { DoorstepCamera } from "./DoorstepCamera";
 import { FloorWalkControls } from "./FloorWalkControls";
 import { FurniturePlacements } from "./FurniturePlacements";
 import { HouseModel } from "./HouseModel";
+import type { LibraryItem } from "@/lib/assetLibrary";
+import type { ModelPlacement } from "@/lib/modelPlacement";
 import type { WallPicturePlacement } from "@/lib/wallPicturePlacement";
+import { ModelPlacer } from "./ModelPlacer";
+import { ModelSelector } from "./ModelSelector";
+import { PlacedModels } from "./PlacedModels";
 import { WallPicture } from "./WallPicture";
 import { WallPicturePlacer } from "./WallPicturePlacer";
 import { WallPictureSelector } from "./WallPictureSelector";
@@ -28,15 +33,23 @@ export type HouseViewerProps = {
   furnitureAssignments?: Record<string, string>;
   wallPlacements?: WallPicturePlacement[];
   imagesLibrary?: ReadonlyArray<{ id: string; src: string }>;
+  modelsLibrary?: ReadonlyArray<LibraryItem>;
+  modelPlacements?: ModelPlacement[];
   pendingWallImage?: string | null;
   pendingWallAspect?: number;
   pendingImageFallbacks?: string[];
+  pendingModelRef?: string | null;
   onWallPlaced?: (placement: Omit<WallPicturePlacement, "id">) => void;
   onCancelWallPlacement?: () => void;
   onWallPlacementMissed?: () => void;
-  wallPictureSelectActive?: boolean;
+  onModelPlaced?: (placement: Omit<ModelPlacement, "id">) => void;
+  onCancelModelPlacement?: () => void;
+  onModelPlacementMissed?: () => void;
+  editPlacementActive?: boolean;
   selectedWallPlacementId?: string | null;
   onWallPlacementSelect?: (placementId: string | null) => void;
+  selectedModelPlacementId?: string | null;
+  onModelPlacementSelect?: (placementId: string | null) => void;
   orbitRoomId?: OrbitRoomId;
   orbitRoomRevision?: number;
   currentWaypointId?: string;
@@ -66,15 +79,23 @@ export default function HouseViewer({
   furnitureAssignments = {},
   wallPlacements = [],
   imagesLibrary = [],
+  modelsLibrary = [],
+  modelPlacements = [],
   pendingWallImage = null,
   pendingWallAspect = 4 / 3,
   pendingImageFallbacks = [],
+  pendingModelRef = null,
   onWallPlaced,
   onCancelWallPlacement,
   onWallPlacementMissed,
-  wallPictureSelectActive = false,
+  onModelPlaced,
+  onCancelModelPlacement,
+  onModelPlacementMissed,
+  editPlacementActive = false,
   selectedWallPlacementId = null,
   onWallPlacementSelect,
+  selectedModelPlacementId = null,
+  onModelPlacementSelect,
   orbitRoomId = "hallway",
   orbitRoomRevision = 0,
   onWaypointMap,
@@ -155,8 +176,15 @@ export default function HouseViewer({
   const occluderStable = walkSets?.occluder ?? new Set<string>();
   const furnitureStable = walkSets?.furniture ?? new Set<string>();
   const wallPlacementPending = Boolean(pendingWallImage);
+  const modelPlacementPending = Boolean(pendingModelRef);
+  const anyPlacementPending = wallPlacementPending || modelPlacementPending;
+  const editPickerActive =
+    editPlacementActive && !anyPlacementPending;
   const wallPicturePickerActive =
-    wallPictureSelectActive && !wallPlacementPending && Boolean(onWallPlacementSelect);
+    editPickerActive && Boolean(onWallPlacementSelect);
+  const modelPickerActive =
+    editPickerActive && Boolean(onModelPlacementSelect);
+  const canvasPickerActive = wallPicturePickerActive || modelPickerActive;
   const walkSessionActive = useRef(false);
 
   useEffect(() => {
@@ -164,7 +192,7 @@ export default function HouseViewer({
   }, [viewMode]);
 
   const bindWalkDoorstep =
-    viewMode === "walk" && !walkSessionActive.current && !wallPlacementPending;
+    viewMode === "walk" && !walkSessionActive.current && !anyPlacementPending;
 
   useEffect(() => {
     if (viewMode === "walk" && sceneRoot && doorstepPose) {
@@ -217,14 +245,14 @@ export default function HouseViewer({
           maxDistance={120}
           minDistance={0.5}
           mouseButtons={
-            wallPlacementPending || wallPicturePickerActive
+            anyPlacementPending || canvasPickerActive
               ? {
                   MIDDLE: MOUSE.DOLLY,
                   RIGHT: MOUSE.ROTATE,
                 }
               : undefined
           }
-          enablePan={!wallPlacementPending && !wallPicturePickerActive}
+          enablePan={!anyPlacementPending && !canvasPickerActive}
         />
 
         <Suspense fallback={null}>
@@ -271,6 +299,35 @@ export default function HouseViewer({
           />
         ) : null}
 
+        <PlacedModels
+          placements={modelPlacements}
+          modelsLibrary={modelsLibrary}
+          selectedPlacementId={selectedModelPlacementId}
+        />
+
+        {modelPickerActive && onModelPlacementSelect ? (
+          <ModelSelector
+            active
+            viewMode={viewMode}
+            onSelect={onModelPlacementSelect}
+          />
+        ) : null}
+
+        {modelPlacementPending &&
+        pendingModelRef &&
+        sceneRoot &&
+        onModelPlaced ? (
+          <ModelPlacer
+            active
+            viewMode={viewMode}
+            sceneRoot={sceneRoot}
+            pendingModelRef={pendingModelRef}
+            onPlaced={onModelPlaced}
+            onCancel={onCancelModelPlacement}
+            onPlacementMissed={onModelPlacementMissed}
+          />
+        ) : null}
+
         {viewMode === "overview" ? (
           <DoorstepCamera
             scene={sceneRoot}
@@ -287,7 +344,7 @@ export default function HouseViewer({
             walkStrict={walkStrict}
             occluderUuids={occluderStable}
             furnitureUuids={furnitureStable}
-            locomotionEnabled={!wallPlacementPending}
+            locomotionEnabled={!anyPlacementPending}
             bindDoorstepOnMount={bindWalkDoorstep}
           />
         ) : null}
