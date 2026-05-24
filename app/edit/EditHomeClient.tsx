@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import type { PlacementPanelContext } from "@/components/HouseExperience";
 import HouseExperience from "@/components/HouseExperience";
+import { WallPictureAdjustControls } from "@/components/WallPictureAdjustControls";
 import {
   normalizedIndexedDbPlacementRef,
   newLibraryId,
   refsMatchingLibraryItem,
   type LibraryItem,
 } from "@/lib/assetLibrary";
+import type { WallPicturePlacement } from "@/lib/wallPicturePlacement";
 import { deleteVaultAsset, putVaultAsset } from "@/lib/assetVaultIdb";
 import { viewerModelSrc } from "@/lib/modelUrl";
 
@@ -47,6 +49,16 @@ function revokeObjectUrlMaybe(src: string) {
   if (src.startsWith("blob:")) URL.revokeObjectURL(src);
 }
 
+function wallPlacementLabel(
+  placement: WallPicturePlacement,
+  images: LibraryItem[],
+): string {
+  const item = images.find((img) =>
+    refsMatchingLibraryItem(img).includes(placement.imageSrc),
+  );
+  return item?.label ?? "Wall picture";
+}
+
 function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const r = new FileReader();
@@ -62,6 +74,12 @@ function EditPanel(context: PlacementPanelContext) {
     setAssignments,
     wallPlacements,
     setWallPlacements,
+    selectedWallPlacementId,
+    setSelectedWallPlacementId,
+    nudgeSelectedWallPlacement,
+    scaleSelectedWallPlacement,
+    removeSelectedWallPlacement,
+    removeWallPlacement,
     setPendingWallImage,
     modelsLibrary,
     imagesLibrary,
@@ -453,6 +471,50 @@ function EditPanel(context: PlacementPanelContext) {
                   Reading picture…
                 </p>
               ) : null}
+            </div>
+            <div>
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--museum-muted)]">
+                On the wall
+              </h3>
+              {wallPlacements.length === 0 ? (
+                <p className="mt-2 text-[11px] text-[var(--museum-muted)]">
+                  No pictures hung yet — upload one, then Place on a wall.
+                </p>
+              ) : (
+                <ul className="mt-2 space-y-2">
+                  {wallPlacements.map((placement) => {
+                    const selected = placement.id === selectedWallPlacementId;
+                    return (
+                      <li
+                        key={placement.id}
+                        className={`rounded-sm border px-2 py-2 ${
+                          selected
+                            ? "border-[var(--museum-brass-dark)]/50 bg-[var(--museum-brass)]/10"
+                            : "border-[var(--museum-rule)]"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          className="w-full text-left text-xs font-medium text-[var(--museum-ink)]"
+                          onClick={() => setSelectedWallPlacementId(placement.id)}
+                        >
+                          {wallPlacementLabel(placement, imagesLibrary)}
+                        </button>
+                        {selected ? (
+                          <div className="mt-2 border-t border-[var(--museum-rule)] pt-2">
+                            <WallPictureAdjustControls
+                              compact
+                              onNudge={nudgeSelectedWallPlacement}
+                              onZoom={scaleSelectedWallPlacement}
+                              onRemove={() => removeWallPlacement(placement.id)}
+                            />
+                          </div>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </div>
             <div>
               <h3 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--museum-muted)]">

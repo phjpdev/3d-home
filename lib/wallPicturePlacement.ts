@@ -354,3 +354,69 @@ export async function loadImageAspect(
 ): Promise<number> {
   return loadImageAspectFromSrc(src, fallbacks);
 }
+
+export const WALL_PICTURE_NUDGE_STEP = 0.05;
+export const WALL_PICTURE_SCALE_FACTOR = 1.08;
+export const WALL_PICTURE_MIN_WIDTH = 0.28;
+export const WALL_PICTURE_MAX_WIDTH = 1.45;
+
+export function nudgeWallPlacement(
+  placement: WallPicturePlacement,
+  deltaRight: number,
+  deltaUp: number,
+): WallPicturePlacement {
+  const q = new THREE.Quaternion(
+    placement.quaternion[0],
+    placement.quaternion[1],
+    placement.quaternion[2],
+    placement.quaternion[3],
+  );
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(q);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
+  const pos = new THREE.Vector3(
+    placement.position[0],
+    placement.position[1],
+    placement.position[2],
+  );
+  pos.addScaledVector(right, deltaRight * WALL_PICTURE_NUDGE_STEP);
+  pos.addScaledVector(up, deltaUp * WALL_PICTURE_NUDGE_STEP);
+  return {
+    ...placement,
+    position: [pos.x, pos.y, pos.z],
+  };
+}
+
+export function scaleWallPlacement(
+  placement: WallPicturePlacement,
+  factor: number,
+): WallPicturePlacement {
+  const aspect = placement.width / Math.max(placement.height, 1e-6);
+  let width = placement.width * factor;
+  width = THREE.MathUtils.clamp(
+    width,
+    WALL_PICTURE_MIN_WIDTH,
+    WALL_PICTURE_MAX_WIDTH,
+  );
+  let height = width / aspect;
+  const maxHeight = 1.35;
+  const minHeight = 0.22;
+  if (height > maxHeight) {
+    height = maxHeight;
+    width = height * aspect;
+  }
+  if (height < minHeight) {
+    height = minHeight;
+    width = height * aspect;
+  }
+  return { ...placement, width, height };
+}
+
+export function placementIdFromObject(obj: THREE.Object3D | null): string | null {
+  let o: THREE.Object3D | null = obj;
+  while (o) {
+    const id = o.userData?.placementId;
+    if (typeof id === "string" && id.length > 0) return id;
+    o = o.parent;
+  }
+  return null;
+}

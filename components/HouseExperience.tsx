@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import type { HouseViewMode } from "@/components/HouseViewer";
+import { WallPictureAdjustControls } from "@/components/WallPictureAdjustControls";
 import {
   hydrateAssetLibraryFromVault,
   migrateHeavyDataUrlsToVault,
@@ -25,7 +26,10 @@ import {
 import {
   loadImageAspect,
   newPlacementId,
+  nudgeWallPlacement,
   readStoredWallPlacements,
+  scaleWallPlacement,
+  WALL_PICTURE_SCALE_FACTOR,
   writeStoredWallPlacements,
   type WallPicturePlacement,
 } from "@/lib/wallPicturePlacement";
@@ -60,6 +64,12 @@ export type PlacementPanelContext = {
       | WallPicturePlacement[]
       | ((prev: WallPicturePlacement[]) => WallPicturePlacement[]),
   ) => void;
+  selectedWallPlacementId: string | null;
+  setSelectedWallPlacementId: (next: string | null) => void;
+  nudgeSelectedWallPlacement: (deltaRight: number, deltaUp: number) => void;
+  scaleSelectedWallPlacement: (zoomIn: boolean) => void;
+  removeSelectedWallPlacement: () => void;
+  removeWallPlacement: (id: string) => void;
   pendingWallImage: string | null;
   setPendingWallImage: (next: string | null) => void;
   modelsLibrary: LibraryItem[];
@@ -161,6 +171,10 @@ export default function HouseExperience({
     WallPicturePlacement[]
   >([]);
 
+  const [selectedWallPlacementId, setSelectedWallPlacementIdState] = useState<
+    string | null
+  >(null);
+
   const [pendingWallImage, setPendingWallImageState] = useState<string | null>(
     null,
   );
@@ -247,11 +261,61 @@ export default function HouseExperience({
     [siteMode],
   );
 
+  const setSelectedWallPlacementId = useCallback((next: string | null) => {
+    setSelectedWallPlacementIdState(next);
+  }, []);
+
+  const nudgeSelectedWallPlacement = useCallback(
+    (deltaRight: number, deltaUp: number) => {
+      if (!selectedWallPlacementId) return;
+      setWallPlacements((prev) =>
+        prev.map((p) =>
+          p.id === selectedWallPlacementId
+            ? nudgeWallPlacement(p, deltaRight, deltaUp)
+            : p,
+        ),
+      );
+    },
+    [selectedWallPlacementId, setWallPlacements],
+  );
+
+  const scaleSelectedWallPlacement = useCallback(
+    (zoomIn: boolean) => {
+      if (!selectedWallPlacementId) return;
+      const factor = zoomIn
+        ? WALL_PICTURE_SCALE_FACTOR
+        : 1 / WALL_PICTURE_SCALE_FACTOR;
+      setWallPlacements((prev) =>
+        prev.map((p) =>
+          p.id === selectedWallPlacementId ? scaleWallPlacement(p, factor) : p,
+        ),
+      );
+    },
+    [selectedWallPlacementId, setWallPlacements],
+  );
+
+  const removeSelectedWallPlacement = useCallback(() => {
+    if (!selectedWallPlacementId) return;
+    setWallPlacements((prev) =>
+      prev.filter((p) => p.id !== selectedWallPlacementId),
+    );
+    setSelectedWallPlacementIdState(null);
+  }, [selectedWallPlacementId, setWallPlacements]);
+
+  const removeWallPlacement = useCallback(
+    (id: string) => {
+      setWallPlacements((prev) => prev.filter((p) => p.id !== id));
+      setSelectedWallPlacementIdState((prev) => (prev === id ? null : prev));
+    },
+    [setWallPlacements],
+  );
+
   const setPendingWallImage = useCallback(
     (next: string | null) => {
       setPendingWallImageState(next);
       setPlacementMissNotice(false);
       if (next) {
+        setSelectedWallPlacementIdState(null);
         const fb = libraryBlobFallbackForRef(next, assetLibraries.images);
         void loadImageAspect(next, fb ? [fb] : []).then(setPendingWallAspect);
       }
@@ -266,10 +330,9 @@ export default function HouseExperience({
 
   const handleWallPlaced = useCallback(
     (placement: Omit<WallPicturePlacement, "id">) => {
-      setWallPlacements((prev) => [
-        ...prev,
-        { ...placement, id: newPlacementId() },
-      ]);
+      const id = newPlacementId();
+      setWallPlacements((prev) => [...prev, { ...placement, id }]);
+      setSelectedWallPlacementIdState(id);
       setPendingWallImageState(null);
       setPlacementMissNotice(false);
     },
@@ -359,6 +422,12 @@ export default function HouseExperience({
           setAssignments,
           wallPlacements,
           setWallPlacements,
+          selectedWallPlacementId,
+          setSelectedWallPlacementId,
+          nudgeSelectedWallPlacement,
+          scaleSelectedWallPlacement,
+          removeSelectedWallPlacement,
+          removeWallPlacement,
           pendingWallImage,
           setPendingWallImage,
           modelsLibrary: assetLibraries.models,
@@ -384,6 +453,9 @@ export default function HouseExperience({
           onWallPlaced={handleWallPlaced}
           onCancelWallPlacement={cancelWallPlacement}
           onWallPlacementMissed={handleWallPlacementMissed}
+          wallPictureSelectActive={siteMode === "edit"}
+          selectedWallPlacementId={selectedWallPlacementId}
+          onWallPlacementSelect={setSelectedWallPlacementId}
           onRegistry={handleRegistry}
         />
       </div>
@@ -405,6 +477,24 @@ export default function HouseExperience({
             >
               Cancel
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {siteMode === "edit" &&
+      selectedWallPlacementId &&
+      !pendingWallImage ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-[max(4.75rem,env(safe-area-inset-bottom))] z-30 flex justify-center px-3">
+          <div className="pointer-events-auto w-full max-w-md rounded-sm border border-[var(--museum-brass-dark)]/40 bg-[var(--museum-parchment)]/96 px-3 py-2.5 shadow-md backdrop-blur-sm">
+            <p className="museum-sans mb-2 text-center text-[11px] font-medium text-[var(--museum-ink)] sm:text-xs">
+              Adjust picture · click a frame to select
+            </p>
+            <WallPictureAdjustControls
+              compact
+              onNudge={nudgeSelectedWallPlacement}
+              onZoom={scaleSelectedWallPlacement}
+              onRemove={removeSelectedWallPlacement}
+            />
           </div>
         </div>
       ) : null}

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { memo, Suspense, useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 
 import { loadVintageWallTextureFromSrc, libraryBlobFallbackForRef } from "@/lib/imageVaultTexture";
@@ -9,24 +9,67 @@ import type { WallPicturePlacement } from "@/lib/wallPicturePlacement";
 export type WallPictureProps = {
   placements?: WallPicturePlacement[];
   imagesLibrary?: ReadonlyArray<{ id: string; src: string }>;
+  selectedPlacementId?: string | null;
 };
+
+function placementsEqual(a: WallPicturePlacement, b: WallPicturePlacement): boolean {
+  return (
+    a.id === b.id &&
+    a.imageSrc === b.imageSrc &&
+    a.width === b.width &&
+    a.height === b.height &&
+    a.position[0] === b.position[0] &&
+    a.position[1] === b.position[1] &&
+    a.position[2] === b.position[2] &&
+    a.quaternion[0] === b.quaternion[0] &&
+    a.quaternion[1] === b.quaternion[1] &&
+    a.quaternion[2] === b.quaternion[2] &&
+    a.quaternion[3] === b.quaternion[3]
+  );
+}
+
+const WallPictureItem = memo(function WallPictureItem({
+  placement,
+  imagesLibrary,
+  selected,
+}: {
+  placement: WallPicturePlacement;
+  imagesLibrary: ReadonlyArray<{ id: string; src: string }>;
+  selected: boolean;
+}) {
+  const imageFallback = useMemo(
+    () => libraryBlobFallbackForRef(placement.imageSrc, imagesLibrary),
+    [placement.imageSrc, imagesLibrary],
+  );
+
+  return (
+    <WallPictureInner
+      placement={placement}
+      imageFallback={imageFallback}
+      selected={selected}
+    />
+  );
+}, (prev, next) => {
+  if (prev.selected !== next.selected) return false;
+  if (prev.imagesLibrary !== next.imagesLibrary) return false;
+  return placementsEqual(prev.placement, next.placement);
+});
 
 export function WallPicture({
   placements = [],
   imagesLibrary = [],
+  selectedPlacementId = null,
 }: WallPictureProps) {
   return (
     <Suspense fallback={null}>
-      {placements.map((placement) => {
-        const fb = libraryBlobFallbackForRef(placement.imageSrc, imagesLibrary);
-        return (
-          <WallPictureInner
-            key={placement.id}
-            placement={placement}
-            imageFallbacks={fb ? [fb] : []}
-          />
-        );
-      })}
+      {placements.map((placement) => (
+        <WallPictureItem
+          key={placement.id}
+          placement={placement}
+          imagesLibrary={imagesLibrary}
+          selected={placement.id === selectedPlacementId}
+        />
+      ))}
     </Suspense>
   );
 }
@@ -115,10 +158,12 @@ function OrnateGoldFrame({
   texture,
   width,
   height,
+  selected = false,
 }: {
   texture: THREE.Texture;
   width: number;
   height: number;
+  selected?: boolean;
 }) {
   const outerW = width + 2 * FRAME_RAIL;
   const outerH = height + 2 * FRAME_RAIL;
@@ -151,6 +196,19 @@ function OrnateGoldFrame({
 
   return (
     <group>
+      {selected ? (
+        <mesh position={[0, 0, zPhoto + 0.001]} renderOrder={19}>
+          <planeGeometry args={[width + 0.024, height + 0.024]} />
+          <meshBasicMaterial
+            color="#c9a84c"
+            transparent
+            opacity={0.55}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ) : null}
+
       <mesh position={[0, 0, -DEPTH * 0.28]} material={backingMat}>
         <boxGeometry args={[outerW + 0.018, outerH + 0.018, DEPTH * 0.42]} />
       </mesh>
@@ -296,36 +354,49 @@ function OrnateGoldFrame({
 
 function WallPictureInner({
   placement,
-  imageFallbacks,
+  imageFallback,
+  selected = false,
 }: {
   placement: WallPicturePlacement;
-  imageFallbacks: string[];
+  imageFallback: string | null;
+  selected?: boolean;
 }) {
   const [texture, setTexture] = useState<THREE.Texture | null>(null);
+  const imageSrc = placement.imageSrc;
 
   useEffect(() => {
-    const { imageSrc } = placement;
     if (!imageSrc) return;
 
     let cancelled = false;
 
     void (async () => {
-      const tex = await loadVintageWallTextureFromSrc(imageSrc, imageFallbacks);
+      const tex = await loadVintageWallTextureFromSrc(
+        imageSrc,
+        imageFallback ? [imageFallback] : [],
+      );
       if (cancelled) {
         tex?.dispose();
         return;
       }
-      setTexture(tex);
+      setTexture((prev) => {
+        if (prev && prev !== tex) prev.dispose();
+        return tex;
+      });
     })();
 
     return () => {
       cancelled = true;
+    };
+  }, [imageSrc, imageFallback]);
+
+  useEffect(() => {
+    return () => {
       setTexture((prev) => {
         if (prev) prev.dispose();
         return null;
       });
     };
-  }, [placement.imageSrc, imageFallbacks]);
+  }, []);
 
   const groupProps = useMemo(() => {
     const q = new THREE.Quaternion(
@@ -342,7 +413,15 @@ function WallPictureInner({
       ),
       quaternion: q,
     };
-  }, [placement]);
+  }, [
+    placement.position[0],
+    placement.position[1],
+    placement.position[2],
+    placement.quaternion[0],
+    placement.quaternion[1],
+    placement.quaternion[2],
+    placement.quaternion[3],
+  ]);
 
   if (!texture) return null;
 
@@ -351,12 +430,13 @@ function WallPictureInner({
       position={groupProps.position}
       quaternion={groupProps.quaternion}
       renderOrder={10}
-      userData={{ wallPicture: true }}
+      userData={{ wallPicture: true, placementId: placement.id }}
     >
       <OrnateGoldFrame
         texture={texture}
         width={placement.width}
         height={placement.height}
+        selected={selected}
       />
     </group>
   );

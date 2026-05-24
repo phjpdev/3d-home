@@ -18,6 +18,7 @@ import { HouseModel } from "./HouseModel";
 import type { WallPicturePlacement } from "@/lib/wallPicturePlacement";
 import { WallPicture } from "./WallPicture";
 import { WallPicturePlacer } from "./WallPicturePlacer";
+import { WallPictureSelector } from "./WallPictureSelector";
 
 export type HouseViewMode = "overview" | "walk";
 
@@ -33,6 +34,9 @@ export type HouseViewerProps = {
   onWallPlaced?: (placement: Omit<WallPicturePlacement, "id">) => void;
   onCancelWallPlacement?: () => void;
   onWallPlacementMissed?: () => void;
+  wallPictureSelectActive?: boolean;
+  selectedWallPlacementId?: string | null;
+  onWallPlacementSelect?: (placementId: string | null) => void;
   orbitRoomId?: OrbitRoomId;
   orbitRoomRevision?: number;
   currentWaypointId?: string;
@@ -68,6 +72,9 @@ export default function HouseViewer({
   onWallPlaced,
   onCancelWallPlacement,
   onWallPlacementMissed,
+  wallPictureSelectActive = false,
+  selectedWallPlacementId = null,
+  onWallPlacementSelect,
   orbitRoomId = "hallway",
   orbitRoomRevision = 0,
   onWaypointMap,
@@ -148,6 +155,8 @@ export default function HouseViewer({
   const occluderStable = walkSets?.occluder ?? new Set<string>();
   const furnitureStable = walkSets?.furniture ?? new Set<string>();
   const wallPlacementPending = Boolean(pendingWallImage);
+  const wallPicturePickerActive =
+    wallPictureSelectActive && !wallPlacementPending && Boolean(onWallPlacementSelect);
   const walkSessionActive = useRef(false);
 
   useEffect(() => {
@@ -208,14 +217,14 @@ export default function HouseViewer({
           maxDistance={120}
           minDistance={0.5}
           mouseButtons={
-            wallPlacementPending
+            wallPlacementPending || wallPicturePickerActive
               ? {
                   MIDDLE: MOUSE.DOLLY,
                   RIGHT: MOUSE.ROTATE,
                 }
               : undefined
           }
-          enablePan={!wallPlacementPending}
+          enablePan={!wallPlacementPending && !wallPicturePickerActive}
         />
 
         <Suspense fallback={null}>
@@ -230,7 +239,19 @@ export default function HouseViewer({
           assignments={furnitureAssignments}
         />
 
-        <WallPicture placements={wallPlacements} imagesLibrary={imagesLibrary} />
+        <WallPicture
+          placements={wallPlacements}
+          imagesLibrary={imagesLibrary}
+          selectedPlacementId={selectedWallPlacementId}
+        />
+
+        {wallPicturePickerActive && onWallPlacementSelect ? (
+          <WallPictureSelector
+            active
+            viewMode={viewMode}
+            onSelect={onWallPlacementSelect}
+          />
+        ) : null}
 
         {wallPlacementPending &&
         pendingWallImage &&
