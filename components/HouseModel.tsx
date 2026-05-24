@@ -12,7 +12,7 @@ export type HouseModelProps = {
 };
 
 export function HouseModel({ onSceneAvailable, onAnnotations }: HouseModelProps) {
-  const { scene } = useGLTF("/housefinal1.glb");
+  const { scene } = useGLTF("/EinsteinHouseDone.glb");
 
   useLayoutEffect(() => {
     if (!scene) return;
@@ -24,4 +24,4 @@ export function HouseModel({ onSceneAvailable, onAnnotations }: HouseModelProps)
   return <primitive object={scene} />;
 }
 
-useGLTF.preload("/housefinal1.glb");
+useGLTF.preload("/EinsteinHouseDone.glb");
