@@ -94,6 +94,7 @@ export function ModelSelector({
         return;
       }
 
+      e.stopPropagation();
       selectingModel.current = true;
       pending.current = true;
       dragging.current = false;

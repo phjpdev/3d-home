@@ -6,6 +6,24 @@ import { useFrame, useThree } from "@react-three/fiber";
 
 import type { DoorstepPose } from "@/lib/doorstepPose";
 
+function hitIsUserPlacement(obj: THREE.Object3D): boolean {
+  let o: THREE.Object3D | null = obj;
+  while (o) {
+    if (o.userData?.placedModel || o.userData?.wallPicture) return true;
+    if (typeof o.userData?.placementId === "string") return true;
+    o = o.parent;
+  }
+  return false;
+}
+
+function pointerHitsUserPlacement(
+  raycaster: THREE.Raycaster,
+  scene: THREE.Scene,
+): boolean {
+  const hits = raycaster.intersectObjects(scene.children, true);
+  return hits.some((h) => hitIsUserPlacement(h.object));
+}
+
 const CURSOR_WALK = 'url("/walk-cursor.svg") 16 18, pointer';
 
 /** Max horizontal travel per floor click (approx. meters for typical GLBs). */
@@ -200,7 +218,7 @@ export function FloorWalkControls({
   locomotionEnabled = true,
   bindDoorstepOnMount = true,
 }: FloorWalkControlsProps) {
-  const { camera, gl } = useThree();
+  const { camera, gl, scene } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
   const pointer = useRef(new THREE.Vector2());
   const yaw = useRef(0);
@@ -365,11 +383,14 @@ export function FloorWalkControls({
 
     const onDown = (e: PointerEvent) => {
       if (transit.current) return;
+      setPointerFromEvent(e);
+      raycaster.current.setFromCamera(pointer.current, camera);
+      if (pointerHitsUserPlacement(raycaster.current, scene)) return;
+
       pending.current = true;
       dragging.current = false;
       last.current = { x: e.clientX, y: e.clientY };
       start.current = { x: e.clientX, y: e.clientY };
-      setPointerFromEvent(e);
       el.setPointerCapture(e.pointerId);
     };
 
@@ -391,6 +412,8 @@ export function FloorWalkControls({
       if (wasDrag) return;
 
       raycaster.current.setFromCamera(pointer.current, camera);
+      if (pointerHitsUserPlacement(raycaster.current, scene)) return;
+
       const hits = raycaster.current.intersectObject(sceneRoot, true);
       const camPos = camera.position;
       const hit = pickWalkableFloorHit(
@@ -449,6 +472,7 @@ export function FloorWalkControls({
     camera,
     gl.domElement,
     locomotionEnabled,
+    scene,
     sceneRoot,
     floorMinY,
     floorMaxY,
