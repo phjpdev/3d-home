@@ -149,8 +149,10 @@ function worldNormal(hit: THREE.Intersection): THREE.Vector3 {
 export function placementIdFromObject(obj: THREE.Object3D | null): string | null {
   let o: THREE.Object3D | null = obj;
   while (o) {
-    const id = o.userData?.placementId;
-    if (typeof id === "string" && id.length > 0) return id;
+    if (o.userData?.placedModel) {
+      const id = o.userData.placementId;
+      if (typeof id === "string" && id.length > 0) return id;
+    }
     o = o.parent;
   }
   return null;
@@ -324,9 +326,12 @@ export function bottomCenterOffset(scene: THREE.Object3D): THREE.Vector3 {
   return new THREE.Vector3(-center.x, -box.min.y, -center.z);
 }
 
+/** Tall-side target in house scene units (~meters). */
+const PLACED_MODEL_TARGET_SIZE = 0.88;
+
 /** Auto-fit scale multiplier for raw GLB bounds (matches FurniturePlacements). */
 export function autoFitScaleForBounds(size: THREE.Vector3): number {
   const maxDim = Math.max(size.x, size.y, size.z);
-  if (maxDim <= 0.001) return 1;
-  return THREE.MathUtils.clamp(1 / maxDim, 0.06, 1.85) * 1.05;
+  if (maxDim <= 1e-4) return 1;
+  return THREE.MathUtils.clamp(PLACED_MODEL_TARGET_SIZE / maxDim, 0.008, 15);
 }

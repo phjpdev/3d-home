@@ -1,22 +1,18 @@
 "use client";
 
-import { memo, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Clone } from "@react-three/drei";
+import { memo, useEffect, useMemo, useState } from "react";
 import { useThree } from "@react-three/fiber";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import * as THREE from "three";
 
 import { refsMatchingLibraryItem, type LibraryItem } from "@/lib/assetLibrary";
+import { loadGltfScene } from "@/lib/gltfSceneLoad";
 import {
   autoFitScaleForBounds,
   bottomCenterOffset,
   type ModelPlacement,
 } from "@/lib/modelPlacement";
-import {
-  getVaultAssetBuffer,
-  indexedDbAssetId,
-  isIndexedDbRef,
-} from "@/lib/assetVaultIdb";
-import { viewerModelSrc } from "@/lib/modelUrl";
+import { indexedDbAssetId, isIndexedDbRef } from "@/lib/assetVaultIdb";
 
 export type PlacedModelsProps = {
   placements?: ModelPlacement[];
@@ -60,47 +56,32 @@ function modelBlobFallback(
   return null;
 }
 
-async function fetchArrayBuffer(uri: string): Promise<ArrayBuffer> {
-  const res = await fetch(uri);
-  if (!res.ok) throw new Error(`fetch_failed_${res.status}`);
-  return res.arrayBuffer();
+export function libraryBlobFallbackForModelRef(
+  ref: string,
+  models: ReadonlyArray<LibraryItem>,
+): string | null {
+  const item = models.find((m) => refsMatchingLibraryItem(m).includes(ref));
+  if (!item?.src) return null;
+  if (
+    item.src.startsWith("blob:") ||
+    item.src.startsWith("data:") ||
+    item.src.startsWith("http")
+  ) {
+    return item.src;
+  }
+  return null;
 }
 
-async function loadGltfScene(url: string): Promise<THREE.Group | null> {
-  const resolved = viewerModelSrc(url);
-  const loader = new GLTFLoader();
-
-  if (isIndexedDbRef(resolved)) {
-    const id = indexedDbAssetId(resolved);
-    const buffer = id ? await getVaultAssetBuffer(id) : null;
-    if (!buffer?.byteLength) return null;
-    return new Promise((resolve) => {
-      loader.parse(
-        buffer,
-        "",
-        (gltf) => resolve(gltf.scene),
-        () => resolve(null),
-      );
-    });
-  }
-
-  if (resolved.startsWith("data:") || resolved.startsWith("blob:")) {
-    const buffer = await fetchArrayBuffer(resolved);
-    return new Promise((resolve) => {
-      loader.parse(
-        buffer,
-        "",
-        (gltf) => resolve(gltf.scene),
-        () => resolve(null),
-      );
-    });
-  }
-
-  return new Promise((resolve) => {
-    loader.load(resolved, (gltf) => resolve(gltf.scene), undefined, () =>
-      resolve(null),
-    );
-  });
+/** Blob / library URLs first — matches GlbPreview. Vault ref as fallback. */
+function resolveModelLoadCandidates(
+  modelRef: string,
+  modelsLibrary: ReadonlyArray<LibraryItem>,
+): string[] {
+  return [
+    libraryBlobFallbackForModelRef(modelRef, modelsLibrary),
+    modelBlobFallback(modelRef, modelsLibrary),
+    modelRef,
+  ].filter((s, i, arr): s is string => Boolean(s) && arr.indexOf(s) === i);
 }
 
 const PlacedModelItem = memo(function PlacedModelItem({
@@ -112,15 +93,15 @@ const PlacedModelItem = memo(function PlacedModelItem({
   modelsLibrary: ReadonlyArray<LibraryItem>;
   selected: boolean;
 }) {
-  const modelFallback = useMemo(
-    () => modelBlobFallback(placement.modelRef, modelsLibrary),
+  const loadCandidates = useMemo(
+    () => resolveModelLoadCandidates(placement.modelRef, modelsLibrary),
     [placement.modelRef, modelsLibrary],
   );
 
   return (
     <PlacedModelInner
       placement={placement}
-      modelFallback={modelFallback}
+      loadCandidates={loadCandidates}
       selected={selected}
     />
   );
@@ -147,39 +128,72 @@ function SelectionHighlight({ bounds }: { bounds: THREE.Box3 }) {
   );
 }
 
+function prepareSceneForDisplay(scene: THREE.Object3D) {
+  scene.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.frustumCulled = false;
+    mesh.userData.placedModelPart = true;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      mat.side = THREE.DoubleSide;
+      mat.needsUpdate = true;
+    }
+  });
+}
+
+function computePlacedLayout(source: THREE.Object3D) {
+  const probe = source.clone(true);
+  const box = new THREE.Box3().setFromObject(probe);
+  const size = box.getSize(new THREE.Vector3());
+  const fit = autoFitScaleForBounds(size);
+  probe.scale.multiplyScalar(fit);
+  probe.updateMatrixWorld(true);
+  const offset = bottomCenterOffset(probe);
+  probe.position.copy(offset);
+  probe.updateMatrixWorld(true);
+  return {
+    fit,
+    offset,
+    bounds: new THREE.Box3().setFromObject(probe),
+  };
+}
+
+/**
+ * Loads placed GLBs outside drei's useGLTF so progress updates do not
+ * synchronously notify LoadingReporter during render (React 19 / R3F).
+ */
 function PlacedModelInner({
   placement,
-  modelFallback,
+  loadCandidates,
   selected,
 }: {
   placement: ModelPlacement;
-  modelFallback: string | null;
+  loadCandidates: string[];
   selected: boolean;
 }) {
   const [scene, setScene] = useState<THREE.Group | null>(null);
-  const contentRef = useRef<THREE.Group>(null);
-  const [bounds, setBounds] = useState<THREE.Box3 | null>(null);
   const { invalidate } = useThree();
-  const modelRef = placement.modelRef;
 
   useEffect(() => {
     let cancelled = false;
-    const candidates = [modelRef, modelFallback].filter(
-      (s, i, arr): s is string => Boolean(s) && arr.indexOf(s) === i,
-    );
 
     void (async () => {
-      for (const candidate of candidates) {
+      for (const candidate of loadCandidates) {
         try {
           const loaded = await loadGltfScene(candidate);
           if (cancelled) return;
           if (loaded) {
+            prepareSceneForDisplay(loaded);
             setScene(loaded);
             invalidate();
             return;
           }
         } catch {
-          /* try next */
+          /* try next candidate */
         }
       }
       if (!cancelled) setScene(null);
@@ -188,32 +202,12 @@ function PlacedModelInner({
     return () => {
       cancelled = true;
     };
-  }, [modelRef, modelFallback, invalidate]);
+  }, [loadCandidates, invalidate]);
 
-  useEffect(() => {
-    if (!scene || !contentRef.current) return;
-    const root = contentRef.current;
-    while (root.children.length) root.remove(root.children[0]);
-
-    const clone = scene.clone(true);
-    const box = new THREE.Box3().setFromObject(clone);
-    const size = box.getSize(new THREE.Vector3());
-    const fit = autoFitScaleForBounds(size);
-    clone.scale.multiplyScalar(fit);
-    clone.updateMatrixWorld(true);
-    clone.position.copy(bottomCenterOffset(clone));
-    clone.traverse((o) => {
-      o.userData.placedModelPart = true;
-    });
-
-    root.add(clone);
-    setBounds(new THREE.Box3().setFromObject(clone));
-    invalidate();
-
-    return () => {
-      while (root.children.length) root.remove(root.children[0]);
-    };
-  }, [scene, invalidate]);
+  const layout = useMemo(
+    () => (scene ? computePlacedLayout(scene) : null),
+    [scene],
+  );
 
   const groupProps = useMemo(() => {
     const q = new THREE.Quaternion(
@@ -248,7 +242,7 @@ function PlacedModelInner({
     placement.scale[2],
   ]);
 
-  if (!scene) return null;
+  if (!scene || !layout) return null;
 
   return (
     <group
@@ -258,8 +252,12 @@ function PlacedModelInner({
       renderOrder={11}
       userData={{ placedModel: true, placementId: placement.id }}
     >
-      <group ref={contentRef} />
-      {selected && bounds ? <SelectionHighlight bounds={bounds} /> : null}
+      <group position={layout.offset}>
+        <group scale={layout.fit}>
+          <Clone object={scene} deep />
+        </group>
+        {selected ? <SelectionHighlight bounds={layout.bounds} /> : null}
+      </group>
     </group>
   );
 }
@@ -270,7 +268,7 @@ export function PlacedModels({
   selectedPlacementId = null,
 }: PlacedModelsProps) {
   return (
-    <Suspense fallback={null}>
+    <>
       {placements.map((placement) => (
         <PlacedModelItem
           key={placement.id}
@@ -279,22 +277,6 @@ export function PlacedModels({
           selected={placement.id === selectedPlacementId}
         />
       ))}
-    </Suspense>
+    </>
   );
-}
-
-export function libraryBlobFallbackForModelRef(
-  ref: string,
-  models: ReadonlyArray<LibraryItem>,
-): string | null {
-  const item = models.find((m) => refsMatchingLibraryItem(m).includes(ref));
-  if (!item?.src) return null;
-  if (
-    item.src.startsWith("blob:") ||
-    item.src.startsWith("data:") ||
-    item.src.startsWith("http")
-  ) {
-    return item.src;
-  }
-  return null;
 }

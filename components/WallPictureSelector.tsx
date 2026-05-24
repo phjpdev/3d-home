@@ -94,6 +94,7 @@ export function WallPictureSelector({
         return;
       }
 
+      e.stopPropagation();
       selectingPhoto.current = true;
       pending.current = true;
       dragging.current = false;

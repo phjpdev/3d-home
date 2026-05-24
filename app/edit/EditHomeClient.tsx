@@ -565,7 +565,19 @@ function EditPanel(context: PlacementPanelContext) {
                       <button
                         type="button"
                         className="w-full rounded-sm border border-[var(--museum-rule)] bg-transparent px-2 py-2 text-left text-xs text-[var(--museum-ink)] transition hover:bg-black/[0.03]"
-                        onClick={() => setPreviewItem(it)}
+                        onClick={() => {
+                          const refs = new Set(refsMatchingLibraryItem(it));
+                          const onWall = wallPlacements.filter((p) =>
+                            refs.has(p.imageSrc),
+                          );
+                          if (onWall.length > 0) {
+                            setSelectedWallPlacementId(
+                              onWall[onWall.length - 1]!.id,
+                            );
+                            return;
+                          }
+                          setPreviewItem(it);
+                        }}
                       >
                         {it.label}
                       </button>

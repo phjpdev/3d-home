@@ -2,23 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useThree } from "@react-three/fiber";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import * as THREE from "three";
 
-import {
-  getVaultAssetBuffer,
-  indexedDbAssetId,
-  isIndexedDbRef,
-} from "@/lib/assetVaultIdb";
-import { viewerModelSrc } from "@/lib/modelUrl";
-
-async function fetchArrayBuffer(uri: string): Promise<ArrayBuffer> {
-  const res = await fetch(uri);
-  if (!res.ok) {
-    throw new Error(`fetch_failed_${res.status}`);
-  }
-  return res.arrayBuffer();
-}
+import { loadGltfScene } from "@/lib/gltfSceneLoad";
+import { autoFitScaleForBounds } from "@/lib/modelPlacement";
 
 /**
  * Loads placed GLBs outside drei's useGLTF so progress updates from these models
@@ -38,87 +25,20 @@ function OnePlacement({
 
   useEffect(() => {
     let cancelled = false;
-    const resolved = viewerModelSrc(url);
-    const loader = new GLTFLoader();
 
-    async function loadInlinedThenRemote() {
+    void (async () => {
       try {
-        if (isIndexedDbRef(resolved)) {
-          const id = indexedDbAssetId(resolved);
-          const buffer =
-            id && !cancelled ? await getVaultAssetBuffer(id) : null;
-          if (cancelled) return;
-          if (!buffer?.byteLength) {
-            setScene(null);
-            invalidate();
-            return;
-          }
-          loader.parse(
-            buffer,
-            "",
-            (gltf) => {
-              if (!cancelled) {
-                setScene(gltf.scene);
-                invalidate();
-              }
-            },
-            () => {
-              if (!cancelled) {
-                setScene(null);
-                invalidate();
-              }
-            },
-          );
-          return;
-        }
-
-        if (resolved.startsWith("data:") || resolved.startsWith("blob:")) {
-          const buffer = await fetchArrayBuffer(resolved);
-          if (cancelled) return;
-          loader.parse(
-            buffer,
-            "",
-            (gltf) => {
-              if (!cancelled) {
-                setScene(gltf.scene);
-                invalidate();
-              }
-            },
-            () => {
-              if (!cancelled) {
-                setScene(null);
-                invalidate();
-              }
-            },
-          );
-          return;
-        }
-
-        loader.load(
-          resolved,
-          (gltf) => {
-            if (!cancelled) {
-              setScene(gltf.scene);
-              invalidate();
-            }
-          },
-          undefined,
-          () => {
-            if (!cancelled) {
-              setScene(null);
-              invalidate();
-            }
-          },
-        );
+        const loaded = await loadGltfScene(url);
+        if (cancelled) return;
+        setScene(loaded);
+        invalidate();
       } catch {
         if (!cancelled) {
           setScene(null);
           invalidate();
         }
       }
-    }
-
-    void loadInlinedThenRemote();
+    })();
 
     return () => {
       cancelled = true;
@@ -135,10 +55,9 @@ function OnePlacement({
     const clone = scene.clone(true);
     const box = new THREE.Box3().setFromObject(clone);
     const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    if (maxDim > 0.001) {
-      const targetScale = THREE.MathUtils.clamp(1 / maxDim, 0.06, 1.85);
-      clone.scale.multiplyScalar(targetScale * 1.05);
+    const fit = autoFitScaleForBounds(size);
+    if (fit !== 1) {
+      clone.scale.multiplyScalar(fit);
     }
     clone.updateMatrixWorld(true);
     const b2 = new THREE.Box3().setFromObject(clone);

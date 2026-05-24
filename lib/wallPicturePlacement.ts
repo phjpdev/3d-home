@@ -414,8 +414,10 @@ export function scaleWallPlacement(
 export function placementIdFromObject(obj: THREE.Object3D | null): string | null {
   let o: THREE.Object3D | null = obj;
   while (o) {
-    const id = o.userData?.placementId;
-    if (typeof id === "string" && id.length > 0) return id;
+    if (o.userData?.wallPicture) {
+      const id = o.userData.placementId;
+      if (typeof id === "string" && id.length > 0) return id;
+    }
     o = o.parent;
   }
   return null;
