@@ -384,19 +384,7 @@ function EditPanel(context: PlacementPanelContext) {
                       <button
                         type="button"
                         className="w-full rounded-sm border border-[var(--museum-rule)] bg-transparent px-2 py-2 text-left text-xs text-[var(--museum-ink)] transition hover:bg-black/[0.03]"
-                        onClick={() => {
-                          const refs = new Set(refsMatchingLibraryItem(it));
-                          const inScene = modelPlacements.filter((p) =>
-                            refs.has(p.modelRef),
-                          );
-                          if (inScene.length > 0) {
-                            setSelectedModelPlacementId(
-                              inScene[inScene.length - 1]!.id,
-                            );
-                            return;
-                          }
-                          setPreviewItem(it);
-                        }}
+                        onClick={() => setPreviewItem(it)}
                       >
                         {it.label}
                       </button>
@@ -508,6 +496,30 @@ function EditPanel(context: PlacementPanelContext) {
             </div>
             <div>
               <h3 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--museum-muted)]">
+                Your pictures
+              </h3>
+              <ul className="mt-2 space-y-2">
+                {imagesLibrary.length === 0 ? (
+                  <li className="text-[11px] text-[var(--museum-muted)]">
+                    None yet — upload a JPG or PNG.
+                  </li>
+                ) : (
+                  imagesLibrary.map((it) => (
+                    <li key={it.id}>
+                      <button
+                        type="button"
+                        className="w-full rounded-sm border border-[var(--museum-rule)] bg-transparent px-2 py-2 text-left text-xs text-[var(--museum-ink)] transition hover:bg-black/[0.03]"
+                        onClick={() => setPreviewItem(it)}
+                      >
+                        {it.label}
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+            <div>
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--museum-muted)]">
                 On the wall
               </h3>
               {wallPlacements.length === 0 ? (
@@ -549,42 +561,6 @@ function EditPanel(context: PlacementPanelContext) {
                   })}
                 </ul>
               )}
-            </div>
-            <div>
-              <h3 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--museum-muted)]">
-                Your pictures
-              </h3>
-              <ul className="mt-2 space-y-2">
-                {imagesLibrary.length === 0 ? (
-                  <li className="text-[11px] text-[var(--museum-muted)]">
-                    None yet — upload a JPG or PNG.
-                  </li>
-                ) : (
-                  imagesLibrary.map((it) => (
-                    <li key={it.id}>
-                      <button
-                        type="button"
-                        className="w-full rounded-sm border border-[var(--museum-rule)] bg-transparent px-2 py-2 text-left text-xs text-[var(--museum-ink)] transition hover:bg-black/[0.03]"
-                        onClick={() => {
-                          const refs = new Set(refsMatchingLibraryItem(it));
-                          const onWall = wallPlacements.filter((p) =>
-                            refs.has(p.imageSrc),
-                          );
-                          if (onWall.length > 0) {
-                            setSelectedWallPlacementId(
-                              onWall[onWall.length - 1]!.id,
-                            );
-                            return;
-                          }
-                          setPreviewItem(it);
-                        }}
-                      >
-                        {it.label}
-                      </button>
-                    </li>
-                  ))
-                )}
-              </ul>
             </div>
           </section>
         )}
