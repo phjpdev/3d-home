@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import type { HouseViewMode } from "@/components/HouseViewer";
+import { DraggableAdjustPanel } from "@/components/DraggableAdjustPanel";
 import { ModelAdjustControls } from "@/components/ModelAdjustControls";
 import { WallPictureAdjustControls } from "@/components/WallPictureAdjustControls";
 import {
@@ -691,55 +692,38 @@ export default function HouseExperience({
       selectedWallPlacementId &&
       !pendingWallImage &&
       !pendingModelRef ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-[max(4.75rem,env(safe-area-inset-bottom))] z-30 flex justify-center px-3">
-          <div className="pointer-events-auto relative w-full max-w-md rounded-sm border border-[var(--museum-brass-dark)]/40 bg-[var(--museum-parchment)]/96 px-3 py-2.5 shadow-md backdrop-blur-sm">
-            <button
-              type="button"
-              aria-label="Close adjust panel"
-              onClick={() => setSelectedWallPlacementId(null)}
-              className="museum-sans absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-sm text-lg leading-none text-[var(--museum-muted)] transition hover:bg-black/[0.06] hover:text-[var(--museum-ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--museum-brass)]"
-            >
-              ×
-            </button>
-            <p className="museum-sans mb-2 pr-8 text-center text-[11px] font-medium text-[var(--museum-ink)] sm:text-xs">
-              Adjust picture · click a frame to select
-            </p>
-            <WallPictureAdjustControls
-              compact
-              onNudge={nudgeSelectedWallPlacement}
-              onZoom={scaleSelectedWallPlacement}
-              onRemove={removeSelectedWallPlacement}
-            />
-          </div>
-        </div>
+        <DraggableAdjustPanel
+          title="Adjust picture · click a frame to select"
+          resetKey={selectedWallPlacementId}
+          onClose={() => setSelectedWallPlacementId(null)}
+        >
+          <WallPictureAdjustControls
+            compact
+            onNudge={nudgeSelectedWallPlacement}
+            onZoom={scaleSelectedWallPlacement}
+            onRemove={removeSelectedWallPlacement}
+          />
+        </DraggableAdjustPanel>
       ) : null}
 
       {siteMode === "edit" &&
       selectedModelPlacementId &&
       !pendingModelRef &&
       !pendingWallImage ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-[max(4.75rem,env(safe-area-inset-bottom))] z-30 flex justify-center px-3">
-          <div className="pointer-events-auto relative w-full max-w-md rounded-sm border border-[var(--museum-brass-dark)]/40 bg-[var(--museum-parchment)]/96 px-3 py-2.5 shadow-md backdrop-blur-sm">
-            <button
-              type="button"
-              aria-label="Close adjust panel"
-              onClick={() => setSelectedModelPlacementId(null)}
-              className="museum-sans absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-sm text-lg leading-none text-[var(--museum-muted)] transition hover:bg-black/[0.06] hover:text-[var(--museum-ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--museum-brass)]"
-            >
-              ×
-            </button>
-            <p className="museum-sans mb-2 pr-8 text-center text-[11px] font-medium text-[var(--museum-ink)] sm:text-xs">
-              Adjust model · click to select
-            </p>
-            <ModelAdjustControls
-              compact
-              onNudge={nudgeSelectedModelPlacement}
-              onRotate={rotateSelectedModelPlacement}
-              onScale={scaleSelectedModelPlacement}
-              onRemove={removeSelectedModelPlacement}
-            />
-          </div>
-        </div>
+        <DraggableAdjustPanel
+          title="Adjust model · click to select"
+          resetKey={selectedModelPlacementId}
+          anchor="top-left"
+          onClose={() => setSelectedModelPlacementId(null)}
+        >
+          <ModelAdjustControls
+            compact
+            onNudge={nudgeSelectedModelPlacement}
+            onRotate={rotateSelectedModelPlacement}
+            onScale={scaleSelectedModelPlacement}
+            onRemove={removeSelectedModelPlacement}
+          />
+        </DraggableAdjustPanel>
       ) : null}
 
       {placementContext && placementPanel ? (
