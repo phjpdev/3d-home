@@ -60,8 +60,9 @@ function EditPanel(context: PlacementPanelContext) {
   const {
     registry,
     setAssignments,
-    wallImageSrc,
-    setWallSrc,
+    wallPlacement,
+    setWallPlacement,
+    setPendingWallImage,
     modelsLibrary,
     imagesLibrary,
     setAssetLibraries,
@@ -102,10 +103,10 @@ function EditPanel(context: PlacementPanelContext) {
       void deleteVaultAsset(item.id);
       const wallCandidates = refsMatchingLibraryItem(item);
       if (
-        wallImageSrc &&
-        wallCandidates.some((ref) => ref === wallImageSrc)
+        wallPlacement &&
+        wallCandidates.some((ref) => ref === wallPlacement.imageSrc)
       ) {
-        setWallSrc(null);
+        setWallPlacement(null);
       }
       if (item.kind === "glb") {
         setAssetLibraries((prev) => ({
@@ -120,7 +121,7 @@ function EditPanel(context: PlacementPanelContext) {
         }));
       }
     },
-    [setAssetLibraries, setAssignments, setWallSrc, wallImageSrc],
+    [setAssetLibraries, setAssignments, setWallPlacement, wallPlacement],
   );
 
   const onUploadGlb = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -209,7 +210,7 @@ function EditPanel(context: PlacementPanelContext) {
       const ref = placementStoredRef(previewItem);
       setAssignments((prev) => ({ ...prev, [sid]: ref }));
     } else {
-      setWallSrc(placementStoredRef(previewItem));
+      setPendingWallImage(placementStoredRef(previewItem));
     }
     setPreviewItem(null);
   };
@@ -268,14 +269,19 @@ function EditPanel(context: PlacementPanelContext) {
                 </select>
               </>
             ) : (
-              <div className="mt-3 overflow-hidden rounded-sm border border-[var(--museum-rule)] bg-black/5">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={previewItem.src}
-                  alt=""
-                  className="mx-auto max-h-[min(50vh,20rem)] w-full object-contain"
-                />
-              </div>
+              <>
+                <div className="mt-3 overflow-hidden rounded-sm border border-[var(--museum-rule)] bg-black/5">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewItem.src}
+                    alt=""
+                    className="mx-auto max-h-[min(50vh,20rem)] w-full object-contain"
+                  />
+                </div>
+                <p className="museum-sans mt-3 text-[11px] leading-relaxed text-[var(--museum-muted)]">
+                  Place opens the scene — click the wall where the framed picture should hang.
+                </p>
+              </>
             )}
           </div>
           <div className="flex flex-shrink-0 flex-wrap gap-2 border-t border-[var(--museum-rule)] p-3">

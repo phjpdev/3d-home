@@ -185,6 +185,10 @@ export type FloorWalkControlsProps = {
   walkStrict?: boolean;
   occluderUuids?: ReadonlySet<string>;
   furnitureUuids?: ReadonlySet<string>;
+  /** When false, pointer walk is disabled (e.g. wall-picture placement). */
+  locomotionEnabled?: boolean;
+  /** When false, keep the current camera instead of snapping to the doorstep. */
+  bindDoorstepOnMount?: boolean;
 };
 
 export function FloorWalkControls({
@@ -193,6 +197,8 @@ export function FloorWalkControls({
   walkStrict = false,
   occluderUuids = new Set(),
   furnitureUuids = new Set(),
+  locomotionEnabled = true,
+  bindDoorstepOnMount = true,
 }: FloorWalkControlsProps) {
   const { camera, gl } = useThree();
   const raycaster = useRef(new THREE.Raycaster());
@@ -305,6 +311,7 @@ export function FloorWalkControls({
   }, [camera]);
 
   useLayoutEffect(() => {
+    if (!bindDoorstepOnMount) return;
     camera.position.copy(doorstepPose.eye);
     camera.lookAt(doorstepPose.target);
     camera.updateMatrixWorld();
@@ -315,9 +322,18 @@ export function FloorWalkControls({
     );
     yaw.current = euler.y;
     pitch.current = euler.x;
-  }, [camera, doorstepPose]);
+  }, [camera, doorstepPose, bindDoorstepOnMount]);
 
   useEffect(() => {
+    if (!locomotionEnabled) return;
+    const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, "YXZ");
+    yaw.current = euler.y;
+    pitch.current = euler.x;
+  }, [locomotionEnabled, camera]);
+
+  useEffect(() => {
+    if (!locomotionEnabled) return;
+
     const el = gl.domElement;
 
     const setPointerFromEvent = (e: PointerEvent) => {
@@ -432,6 +448,7 @@ export function FloorWalkControls({
   }, [
     camera,
     gl.domElement,
+    locomotionEnabled,
     sceneRoot,
     floorMinY,
     floorMaxY,
@@ -440,6 +457,8 @@ export function FloorWalkControls({
   ]);
 
   useEffect(() => {
+    if (!locomotionEnabled) return;
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (transit.current) return;
 
@@ -474,9 +493,11 @@ export function FloorWalkControls({
 
     window.addEventListener("keydown", onKeyDown, { passive: false });
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [camera, tryCommitMove]);
+  }, [camera, locomotionEnabled, tryCommitMove]);
 
   useFrame(() => {
+    if (!locomotionEnabled) return;
+
     const tr = transit.current;
 
     if (tr) {

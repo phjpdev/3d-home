@@ -6,6 +6,7 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useMemo,
   useState,
 } from "react";
 import type { HouseViewMode } from "@/components/HouseViewer";
@@ -18,6 +19,15 @@ import {
   type LibraryItem,
 } from "@/lib/assetLibrary";
 import type { SceneRegistry } from "@/lib/sceneRegistry";
+import {
+  libraryBlobFallbackForRef,
+} from "@/lib/imageVaultTexture";
+import {
+  loadImageAspect,
+  readStoredWallPlacement,
+  writeStoredWallPlacement,
+  type WallPicturePlacement,
+} from "@/lib/wallPicturePlacement";
 
 export type { HouseSiteMode } from "@/lib/assetLibrary";
 
@@ -43,8 +53,10 @@ export type PlacementPanelContext = {
       | Record<string, string>
       | ((prev: Record<string, string>) => Record<string, string>),
   ) => void;
-  wallImageSrc: string | null;
-  setWallSrc: (next: string | null) => void;
+  wallPlacement: WallPicturePlacement | null;
+  setWallPlacement: (next: WallPicturePlacement | null) => void;
+  pendingWallImage: string | null;
+  setPendingWallImage: (next: string | null) => void;
   modelsLibrary: LibraryItem[];
   imagesLibrary: LibraryItem[];
   setAssetLibraries: (
@@ -63,8 +75,6 @@ export type HouseExperienceProps = {
 };
 
 const STORAGE_ASSIGNMENTS_KEY = "3d-home:furniture-assignments";
-const STORAGE_WALL_PREFIX = "3d-home:wall-image:";
-
 function sanitizeAssignments(
   assignments: Record<string, string>,
 ): Record<string, string> {
@@ -119,26 +129,6 @@ function writeStoredAssignments(
   }
 }
 
-function readStoredWall(siteMode: HouseSiteMode): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return localStorage.getItem(`${STORAGE_WALL_PREFIX}${siteMode}`);
-  } catch {
-    return null;
-  }
-}
-
-function writeStoredWall(siteMode: HouseSiteMode, dataUrl: string | null) {
-  if (typeof window === "undefined") return;
-  try {
-    const k = `${STORAGE_WALL_PREFIX}${siteMode}`;
-    if (!dataUrl) localStorage.removeItem(k);
-    else localStorage.setItem(k, dataUrl);
-  } catch {
-    /* ignore quota */
-  }
-}
-
 const overlayNeutralBtnCls =
   "inline-flex min-h-11 min-w-[7.5rem] cursor-pointer items-center justify-center rounded-sm border border-white/45 bg-black/52 px-5 text-sm font-semibold text-white shadow-lg backdrop-blur-sm transition hover:bg-black/62 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/90 no-underline";
 
@@ -162,7 +152,14 @@ export default function HouseExperience({
     Record<string, string>
   >({});
 
-  const [wallImageSrc, setWallImageSrcState] = useState<string | null>(null);
+  const [wallPlacement, setWallPlacementState] =
+    useState<WallPicturePlacement | null>(null);
+
+  const [pendingWallImage, setPendingWallImageState] = useState<string | null>(
+    null,
+  );
+  const [pendingWallAspect, setPendingWallAspect] = useState(4 / 3);
+  const [placementMissNotice, setPlacementMissNotice] = useState(false);
 
   const [assetLibraries, setAssetLibrariesState] = useState<AssetLibrariesState>({
     models: [],
@@ -181,7 +178,7 @@ export default function HouseExperience({
     let cancel = false;
     startTransition(() => {
       setFurnitureAssignments(readStoredAssignments(siteMode));
-      setWallImageSrcState(readStoredWall(siteMode));
+      setWallPlacementState(readStoredWallPlacement(siteMode));
     });
 
     void (async () => {
@@ -219,13 +216,43 @@ export default function HouseExperience({
     [siteMode],
   );
 
-  const setWallSrc = useCallback(
-    (next: string | null) => {
-      setWallImageSrcState(next);
-      writeStoredWall(siteMode, next);
+  const setWallPlacement = useCallback(
+    (next: WallPicturePlacement | null) => {
+      setWallPlacementState(next);
+      writeStoredWallPlacement(siteMode, next);
     },
     [siteMode],
   );
+
+  const setPendingWallImage = useCallback(
+    (next: string | null) => {
+      setPendingWallImageState(next);
+      setPlacementMissNotice(false);
+      if (next) {
+        const fb = libraryBlobFallbackForRef(next, assetLibraries.images);
+        void loadImageAspect(next, fb ? [fb] : []).then(setPendingWallAspect);
+      }
+    },
+    [assetLibraries.images],
+  );
+
+  const cancelWallPlacement = useCallback(() => {
+    setPendingWallImageState(null);
+    setPlacementMissNotice(false);
+  }, []);
+
+  const handleWallPlaced = useCallback(
+    (placement: WallPicturePlacement) => {
+      setWallPlacement(placement);
+      setPendingWallImageState(null);
+      setPlacementMissNotice(false);
+    },
+    [setWallPlacement],
+  );
+
+  const handleWallPlacementMissed = useCallback(() => {
+    setPlacementMissNotice(true);
+  }, []);
 
   const setAssetLibraries = useCallback(
     (
@@ -253,7 +280,7 @@ export default function HouseExperience({
     const sync = () => {
       startTransition(() => {
         setFurnitureAssignments(readStoredAssignments(siteMode));
-        setWallImageSrcState(readStoredWall(siteMode));
+        setWallPlacementState(readStoredWallPlacement(siteMode));
       });
 
       void (async () => {
@@ -283,14 +310,34 @@ export default function HouseExperience({
 
   const walkStrict = siteMode === "walk";
 
+  const wallImageFallbacks = useMemo(() => {
+    if (!wallPlacement) return [];
+    const fb = libraryBlobFallbackForRef(
+      wallPlacement.imageSrc,
+      assetLibraries.images,
+    );
+    return fb ? [fb] : [];
+  }, [wallPlacement, assetLibraries.images]);
+
+  const pendingImageFallbacks = useMemo(() => {
+    if (!pendingWallImage) return [];
+    const fb = libraryBlobFallbackForRef(
+      pendingWallImage,
+      assetLibraries.images,
+    );
+    return fb ? [fb] : [];
+  }, [pendingWallImage, assetLibraries.images]);
+
   const placementContext: PlacementPanelContext | null =
     placementPanel && siteMode === "edit"
       ? {
           registry,
           assignments: furnitureAssignments,
           setAssignments,
-          wallImageSrc,
-          setWallSrc,
+          wallPlacement,
+          setWallPlacement,
+          pendingWallImage,
+          setPendingWallImage,
           modelsLibrary: assetLibraries.models,
           imagesLibrary: assetLibraries.images,
           setAssetLibraries,
@@ -306,10 +353,38 @@ export default function HouseExperience({
           viewMode={viewMode}
           walkStrict={walkStrict}
           furnitureAssignments={furnitureAssignments}
-          wallImageSrc={wallImageSrc}
+          wallPlacement={wallPlacement}
+          wallImageFallbacks={wallImageFallbacks}
+          pendingWallImage={pendingWallImage}
+          pendingWallAspect={pendingWallAspect}
+          pendingImageFallbacks={pendingImageFallbacks}
+          onWallPlaced={handleWallPlaced}
+          onCancelWallPlacement={cancelWallPlacement}
+          onWallPlacementMissed={handleWallPlacementMissed}
           onRegistry={handleRegistry}
         />
       </div>
+
+      {pendingWallImage ? (
+        <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3">
+          <div className="pointer-events-auto flex max-w-md flex-wrap items-center justify-center gap-2 rounded-sm border border-[var(--museum-brass-dark)]/40 bg-[var(--museum-parchment)]/96 px-4 py-2.5 text-center shadow-md backdrop-blur-sm">
+            <p className="museum-sans text-xs font-medium text-[var(--museum-ink)] sm:text-sm">
+              {placementMissNotice
+                ? "That click missed the wall — try again on the flat wall surface (not the floor or furniture)"
+                : viewMode === "walk"
+                  ? "Click the wall in front of you · drag to look around"
+                  : "Click a wall to hang your picture · right-drag to orbit · scroll to zoom"}
+            </p>
+            <button
+              type="button"
+              onClick={cancelWallPlacement}
+              className="museum-sans rounded-sm border border-[var(--museum-rule)] px-2.5 py-1 text-[11px] font-semibold text-[var(--museum-ink)] hover:bg-black/[0.04]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {placementContext && placementPanel ? (
         <div className="pointer-events-none absolute inset-y-0 left-0 z-20 flex max-h-full items-stretch p-3">

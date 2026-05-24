@@ -12,7 +12,7 @@ const SOFT_OR_TOP_SURFACE =
 
 /** Omit generic `door` — thin door meshes block horizontal casts through openings. */
 const OCC_LIKE =
-  /\b(wall|partition|divider|roof|fence|pillar|pole|beam|window|pane|mirror|brick|drywall)\b/i;
+  /\b(wall|wallpaper|wainscot|wainscoting|paneling|panelling|molding|moulding|partition|divider|roof|fence|pillar|pole|beam|window|pane|mirror|brick|drywall|plaster|board)\b/i;
 
 export type SceneAnnotationMaps = {
   registry: SceneRegistry;
@@ -97,7 +97,7 @@ function annotateMeshWalkOcclude(mesh: THREE.Mesh) {
   mesh.userData.occluder = occ;
 }
 
-export const HOUSE_SCENE_ANNOTATION_REV = 2;
+export const HOUSE_SCENE_ANNOTATION_REV = 3;
 
 /**
  * Traverse a loaded architectural GLB, tag meshes, collect slot anchors & strict-walk masks.

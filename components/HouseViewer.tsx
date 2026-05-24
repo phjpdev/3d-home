@@ -1,8 +1,9 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, useProgress } from "@react-three/drei";
+import { MOUSE } from "three";
 import * as THREE from "three";
 
 import type { ResolvedWaypoint } from "@/data/waypoints";
@@ -14,7 +15,9 @@ import { DoorstepCamera } from "./DoorstepCamera";
 import { FloorWalkControls } from "./FloorWalkControls";
 import { FurniturePlacements } from "./FurniturePlacements";
 import { HouseModel } from "./HouseModel";
+import type { WallPicturePlacement } from "@/lib/wallPicturePlacement";
 import { WallPicture } from "./WallPicture";
+import { WallPicturePlacer } from "./WallPicturePlacer";
 
 export type HouseViewMode = "overview" | "walk";
 
@@ -22,7 +25,14 @@ export type HouseViewerProps = {
   viewMode?: HouseViewMode;
   walkStrict?: boolean;
   furnitureAssignments?: Record<string, string>;
-  wallImageSrc?: string | null;
+  wallPlacement?: WallPicturePlacement | null;
+  wallImageFallbacks?: string[];
+  pendingWallImage?: string | null;
+  pendingWallAspect?: number;
+  pendingImageFallbacks?: string[];
+  onWallPlaced?: (placement: WallPicturePlacement) => void;
+  onCancelWallPlacement?: () => void;
+  onWallPlacementMissed?: () => void;
   orbitRoomId?: OrbitRoomId;
   orbitRoomRevision?: number;
   currentWaypointId?: string;
@@ -50,7 +60,14 @@ export default function HouseViewer({
   viewMode = "overview",
   walkStrict = false,
   furnitureAssignments = {},
-  wallImageSrc = null,
+  wallPlacement = null,
+  wallImageFallbacks = [],
+  pendingWallImage = null,
+  pendingWallAspect = 4 / 3,
+  pendingImageFallbacks = [],
+  onWallPlaced,
+  onCancelWallPlacement,
+  onWallPlacementMissed,
   orbitRoomId = "hallway",
   orbitRoomRevision = 0,
   onWaypointMap,
@@ -130,6 +147,21 @@ export default function HouseViewer({
 
   const occluderStable = walkSets?.occluder ?? new Set<string>();
   const furnitureStable = walkSets?.furniture ?? new Set<string>();
+  const wallPlacementPending = Boolean(pendingWallImage);
+  const walkSessionActive = useRef(false);
+
+  useEffect(() => {
+    if (viewMode === "overview") walkSessionActive.current = false;
+  }, [viewMode]);
+
+  const bindWalkDoorstep =
+    viewMode === "walk" && !walkSessionActive.current && !wallPlacementPending;
+
+  useEffect(() => {
+    if (viewMode === "walk" && sceneRoot && doorstepPose) {
+      walkSessionActive.current = true;
+    }
+  }, [viewMode, sceneRoot, doorstepPose]);
 
   return (
     <div className="relative h-full w-full bg-[var(--museum-parchment)]">
@@ -175,6 +207,15 @@ export default function HouseViewer({
           minPolarAngle={Math.PI * 0.22}
           maxDistance={120}
           minDistance={0.5}
+          mouseButtons={
+            wallPlacementPending
+              ? {
+                  MIDDLE: MOUSE.DOLLY,
+                  RIGHT: MOUSE.ROTATE,
+                }
+              : undefined
+          }
+          enablePan={!wallPlacementPending}
         />
 
         <Suspense fallback={null}>
@@ -189,7 +230,28 @@ export default function HouseViewer({
           assignments={furnitureAssignments}
         />
 
-        <WallPicture scene={sceneRoot} imageSrc={wallImageSrc} />
+        <WallPicture
+          placement={wallPlacement}
+          imageFallbacks={wallImageFallbacks}
+        />
+
+        {wallPlacementPending &&
+        pendingWallImage &&
+        sceneRoot &&
+        onWallPlaced ? (
+          <WallPicturePlacer
+            active
+            viewMode={viewMode}
+            sceneRoot={sceneRoot}
+            occluderUuids={occluderStable}
+            furnitureUuids={furnitureStable}
+            pendingImageSrc={pendingWallImage}
+            textureAspect={pendingWallAspect}
+            onPlaced={onWallPlaced}
+            onCancel={onCancelWallPlacement}
+            onPlacementMissed={onWallPlacementMissed}
+          />
+        ) : null}
 
         {viewMode === "overview" ? (
           <DoorstepCamera
@@ -207,6 +269,8 @@ export default function HouseViewer({
             walkStrict={walkStrict}
             occluderUuids={occluderStable}
             furnitureUuids={furnitureStable}
+            locomotionEnabled={!wallPlacementPending}
+            bindDoorstepOnMount={bindWalkDoorstep}
           />
         ) : null}
       </Canvas>
