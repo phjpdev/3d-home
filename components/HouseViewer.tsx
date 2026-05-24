@@ -25,12 +25,12 @@ export type HouseViewerProps = {
   viewMode?: HouseViewMode;
   walkStrict?: boolean;
   furnitureAssignments?: Record<string, string>;
-  wallPlacement?: WallPicturePlacement | null;
-  wallImageFallbacks?: string[];
+  wallPlacements?: WallPicturePlacement[];
+  imagesLibrary?: ReadonlyArray<{ id: string; src: string }>;
   pendingWallImage?: string | null;
   pendingWallAspect?: number;
   pendingImageFallbacks?: string[];
-  onWallPlaced?: (placement: WallPicturePlacement) => void;
+  onWallPlaced?: (placement: Omit<WallPicturePlacement, "id">) => void;
   onCancelWallPlacement?: () => void;
   onWallPlacementMissed?: () => void;
   orbitRoomId?: OrbitRoomId;
@@ -60,8 +60,8 @@ export default function HouseViewer({
   viewMode = "overview",
   walkStrict = false,
   furnitureAssignments = {},
-  wallPlacement = null,
-  wallImageFallbacks = [],
+  wallPlacements = [],
+  imagesLibrary = [],
   pendingWallImage = null,
   pendingWallAspect = 4 / 3,
   pendingImageFallbacks = [],
@@ -230,10 +230,7 @@ export default function HouseViewer({
           assignments={furnitureAssignments}
         />
 
-        <WallPicture
-          placement={wallPlacement}
-          imageFallbacks={wallImageFallbacks}
-        />
+        <WallPicture placements={wallPlacements} imagesLibrary={imagesLibrary} />
 
         {wallPlacementPending &&
         pendingWallImage &&

@@ -60,8 +60,8 @@ function EditPanel(context: PlacementPanelContext) {
   const {
     registry,
     setAssignments,
-    wallPlacement,
-    setWallPlacement,
+    wallPlacements,
+    setWallPlacements,
     setPendingWallImage,
     modelsLibrary,
     imagesLibrary,
@@ -101,12 +101,11 @@ function EditPanel(context: PlacementPanelContext) {
     (item: LibraryItem) => {
       revokeObjectUrlMaybe(item.src);
       void deleteVaultAsset(item.id);
-      const wallCandidates = refsMatchingLibraryItem(item);
-      if (
-        wallPlacement &&
-        wallCandidates.some((ref) => ref === wallPlacement.imageSrc)
-      ) {
-        setWallPlacement(null);
+      const refs = new Set(refsMatchingLibraryItem(item));
+      if (item.kind === "image") {
+        setWallPlacements((prev) =>
+          prev.filter((p) => !refs.has(p.imageSrc)),
+        );
       }
       if (item.kind === "glb") {
         setAssetLibraries((prev) => ({
@@ -121,7 +120,7 @@ function EditPanel(context: PlacementPanelContext) {
         }));
       }
     },
-    [setAssetLibraries, setAssignments, setWallPlacement, wallPlacement],
+    [setAssetLibraries, setAssignments, setWallPlacements],
   );
 
   const onUploadGlb = async (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { loadImageAspectFromSrc } from "@/lib/imageVaultTexture";
 
 export type WallPicturePlacement = {
+  id: string;
   imageSrc: string;
   position: [number, number, number];
   quaternion: [number, number, number, number];
@@ -20,48 +21,140 @@ const NON_WALL =
 const VERTICAL_Y_STRICT = 0.28;
 const VERTICAL_Y_LOOSE = 0.45;
 
-export function readStoredWallPlacement(
-  siteMode: string,
-): WallPicturePlacement | null {
-  if (typeof window === "undefined") return null;
+export function newPlacementId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `pic_${crypto.randomUUID().replace(/-/g, "")}`;
+  }
+  return `pic_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function isValidPlacementShape(
+  parsed: unknown,
+): parsed is Omit<WallPicturePlacement, "id"> & { id?: string } {
+  if (!parsed || typeof parsed !== "object") return false;
+  const p = parsed as Record<string, unknown>;
+  return (
+    typeof p.imageSrc === "string" &&
+    Array.isArray(p.position) &&
+    p.position.length === 3 &&
+    Array.isArray(p.quaternion) &&
+    p.quaternion.length === 4 &&
+    typeof p.width === "number" &&
+    typeof p.height === "number"
+  );
+}
+
+function normalizePlacement(
+  parsed: Omit<WallPicturePlacement, "id"> & { id?: string },
+): WallPicturePlacement {
+  return {
+    id:
+      typeof parsed.id === "string" && parsed.id.length > 0
+        ? parsed.id
+        : newPlacementId(),
+    imageSrc: parsed.imageSrc,
+    position: parsed.position,
+    quaternion: parsed.quaternion,
+    width: parsed.width,
+    height: parsed.height,
+  };
+}
+
+function isPersistableImageRef(ref: string): boolean {
+  return (
+    ref.startsWith("indexeddb:") ||
+    ref.startsWith("data:") ||
+    ref.startsWith("http://") ||
+    ref.startsWith("https://")
+  );
+}
+
+export function sanitizeWallPlacements(
+  placements: WallPicturePlacement[],
+): WallPicturePlacement[] {
+  const seen = new Set<string>();
+  const out: WallPicturePlacement[] = [];
+  for (const p of placements) {
+    if (!isValidPlacementShape(p)) continue;
+    if (!isPersistableImageRef(p.imageSrc)) continue;
+    const normalized = normalizePlacement(p);
+    if (seen.has(normalized.id)) continue;
+    seen.add(normalized.id);
+    out.push(normalized);
+  }
+  return out;
+}
+
+export function readStoredWallPlacements(siteMode: string): WallPicturePlacement[] {
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(`${STORAGE_WALL_PREFIX}${siteMode}`);
-    if (!raw) return null;
-    if (!raw.startsWith("{")) {
+    if (!raw) return [];
+    let result: WallPicturePlacement[] = [];
+    let migrated = false;
+
+    if (raw.startsWith("[")) {
+      const parsed = JSON.parse(raw) as unknown[];
+      if (Array.isArray(parsed)) {
+        result = sanitizeWallPlacements(
+          parsed.filter(isValidPlacementShape).map((p) => normalizePlacement(p)),
+        );
+      }
+    } else if (raw.startsWith("{")) {
+      const parsed = JSON.parse(raw) as unknown;
+      if (isValidPlacementShape(parsed)) {
+        result = [normalizePlacement(parsed)];
+        migrated = true;
+      }
+    } else {
       localStorage.removeItem(`${STORAGE_WALL_PREFIX}${siteMode}`);
-      return null;
+      return [];
     }
-    const parsed = JSON.parse(raw) as WallPicturePlacement;
-    if (
-      typeof parsed?.imageSrc === "string" &&
-      Array.isArray(parsed.position) &&
-      parsed.position.length === 3 &&
-      Array.isArray(parsed.quaternion) &&
-      parsed.quaternion.length === 4 &&
-      typeof parsed.width === "number" &&
-      typeof parsed.height === "number"
-    ) {
-      return parsed;
+
+    if (result.length === 0 && raw.length > 2) {
+      localStorage.removeItem(`${STORAGE_WALL_PREFIX}${siteMode}`);
+      return [];
     }
-    localStorage.removeItem(`${STORAGE_WALL_PREFIX}${siteMode}`);
-    return null;
+
+    const cleaned = sanitizeWallPlacements(result);
+    if (migrated || cleaned.length !== result.length) {
+      writeStoredWallPlacements(siteMode, cleaned);
+    }
+    return cleaned;
   } catch {
-    return null;
+    return [];
   }
 }
 
-export function writeStoredWallPlacement(
+/** @deprecated Use readStoredWallPlacements */
+export function readStoredWallPlacement(
   siteMode: string,
-  placement: WallPicturePlacement | null,
+): WallPicturePlacement | null {
+  const all = readStoredWallPlacements(siteMode);
+  return all[0] ?? null;
+}
+
+export function writeStoredWallPlacements(
+  siteMode: string,
+  placements: WallPicturePlacement[],
 ) {
   if (typeof window === "undefined") return;
   try {
     const k = `${STORAGE_WALL_PREFIX}${siteMode}`;
-    if (!placement) localStorage.removeItem(k);
-    else localStorage.setItem(k, JSON.stringify(placement));
+    const cleaned = sanitizeWallPlacements(placements);
+    if (cleaned.length === 0) localStorage.removeItem(k);
+    else localStorage.setItem(k, JSON.stringify(cleaned));
   } catch {
     /* ignore quota */
   }
+}
+
+/** @deprecated Use writeStoredWallPlacements */
+export function writeStoredWallPlacement(
+  siteMode: string,
+  placement: WallPicturePlacement | null,
+) {
+  writeStoredWallPlacements(siteMode, placement ? [placement] : []);
 }
 
 function ancestorHasUuid(
@@ -213,7 +306,7 @@ export function poseFromWallHit(
   hit: THREE.Intersection,
   textureAspect: number,
   viewPoint?: THREE.Vector3,
-): Omit<WallPicturePlacement, "imageSrc"> {
+): Omit<WallPicturePlacement, "imageSrc" | "id"> {
   const normal = viewPoint
     ? facingNormal(hit, viewPoint)
     : worldNormal(hit);

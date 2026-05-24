@@ -24,8 +24,9 @@ import {
 } from "@/lib/imageVaultTexture";
 import {
   loadImageAspect,
-  readStoredWallPlacement,
-  writeStoredWallPlacement,
+  newPlacementId,
+  readStoredWallPlacements,
+  writeStoredWallPlacements,
   type WallPicturePlacement,
 } from "@/lib/wallPicturePlacement";
 
@@ -53,8 +54,12 @@ export type PlacementPanelContext = {
       | Record<string, string>
       | ((prev: Record<string, string>) => Record<string, string>),
   ) => void;
-  wallPlacement: WallPicturePlacement | null;
-  setWallPlacement: (next: WallPicturePlacement | null) => void;
+  wallPlacements: WallPicturePlacement[];
+  setWallPlacements: (
+    next:
+      | WallPicturePlacement[]
+      | ((prev: WallPicturePlacement[]) => WallPicturePlacement[]),
+  ) => void;
   pendingWallImage: string | null;
   setPendingWallImage: (next: string | null) => void;
   modelsLibrary: LibraryItem[];
@@ -152,8 +157,9 @@ export default function HouseExperience({
     Record<string, string>
   >({});
 
-  const [wallPlacement, setWallPlacementState] =
-    useState<WallPicturePlacement | null>(null);
+  const [wallPlacements, setWallPlacementsState] = useState<
+    WallPicturePlacement[]
+  >([]);
 
   const [pendingWallImage, setPendingWallImageState] = useState<string | null>(
     null,
@@ -178,7 +184,7 @@ export default function HouseExperience({
     let cancel = false;
     startTransition(() => {
       setFurnitureAssignments(readStoredAssignments(siteMode));
-      setWallPlacementState(readStoredWallPlacement(siteMode));
+      setWallPlacementsState(readStoredWallPlacements(siteMode));
     });
 
     void (async () => {
@@ -190,9 +196,19 @@ export default function HouseExperience({
       const meta = readStoredAssetLibrary(siteMode);
       try {
         const hydrated = await hydrateAssetLibraryFromVault(meta);
-        if (!cancel) startTransition(() => setAssetLibrariesState(hydrated));
+        if (!cancel) {
+          startTransition(() => {
+            setAssetLibrariesState(hydrated);
+            setWallPlacementsState(readStoredWallPlacements(siteMode));
+          });
+        }
       } catch {
-        if (!cancel) startTransition(() => setAssetLibrariesState(meta));
+        if (!cancel) {
+          startTransition(() => {
+            setAssetLibrariesState(meta);
+            setWallPlacementsState(readStoredWallPlacements(siteMode));
+          });
+        }
       }
     })();
 
@@ -216,10 +232,17 @@ export default function HouseExperience({
     [siteMode],
   );
 
-  const setWallPlacement = useCallback(
-    (next: WallPicturePlacement | null) => {
-      setWallPlacementState(next);
-      writeStoredWallPlacement(siteMode, next);
+  const setWallPlacements = useCallback(
+    (
+      next:
+        | WallPicturePlacement[]
+        | ((prev: WallPicturePlacement[]) => WallPicturePlacement[]),
+    ) => {
+      setWallPlacementsState((prev) => {
+        const resolved = typeof next === "function" ? next(prev) : next;
+        writeStoredWallPlacements(siteMode, resolved);
+        return resolved;
+      });
     },
     [siteMode],
   );
@@ -242,12 +265,15 @@ export default function HouseExperience({
   }, []);
 
   const handleWallPlaced = useCallback(
-    (placement: WallPicturePlacement) => {
-      setWallPlacement(placement);
+    (placement: Omit<WallPicturePlacement, "id">) => {
+      setWallPlacements((prev) => [
+        ...prev,
+        { ...placement, id: newPlacementId() },
+      ]);
       setPendingWallImageState(null);
       setPlacementMissNotice(false);
     },
-    [setWallPlacement],
+    [setWallPlacements],
   );
 
   const handleWallPlacementMissed = useCallback(() => {
@@ -280,7 +306,7 @@ export default function HouseExperience({
     const sync = () => {
       startTransition(() => {
         setFurnitureAssignments(readStoredAssignments(siteMode));
-        setWallPlacementState(readStoredWallPlacement(siteMode));
+        setWallPlacementsState(readStoredWallPlacements(siteMode));
       });
 
       void (async () => {
@@ -292,9 +318,15 @@ export default function HouseExperience({
         const meta = readStoredAssetLibrary(siteMode);
         try {
           const hydrated = await hydrateAssetLibraryFromVault(meta);
-          startTransition(() => setAssetLibrariesState(hydrated));
+          startTransition(() => {
+            setAssetLibrariesState(hydrated);
+            setWallPlacementsState(readStoredWallPlacements(siteMode));
+          });
         } catch {
-          startTransition(() => setAssetLibrariesState(meta));
+          startTransition(() => {
+            setAssetLibrariesState(meta);
+            setWallPlacementsState(readStoredWallPlacements(siteMode));
+          });
         }
       })();
     };
@@ -309,15 +341,6 @@ export default function HouseExperience({
   }, []);
 
   const walkStrict = siteMode === "walk";
-
-  const wallImageFallbacks = useMemo(() => {
-    if (!wallPlacement) return [];
-    const fb = libraryBlobFallbackForRef(
-      wallPlacement.imageSrc,
-      assetLibraries.images,
-    );
-    return fb ? [fb] : [];
-  }, [wallPlacement, assetLibraries.images]);
 
   const pendingImageFallbacks = useMemo(() => {
     if (!pendingWallImage) return [];
@@ -334,8 +357,8 @@ export default function HouseExperience({
           registry,
           assignments: furnitureAssignments,
           setAssignments,
-          wallPlacement,
-          setWallPlacement,
+          wallPlacements,
+          setWallPlacements,
           pendingWallImage,
           setPendingWallImage,
           modelsLibrary: assetLibraries.models,
@@ -353,8 +376,8 @@ export default function HouseExperience({
           viewMode={viewMode}
           walkStrict={walkStrict}
           furnitureAssignments={furnitureAssignments}
-          wallPlacement={wallPlacement}
-          wallImageFallbacks={wallImageFallbacks}
+          wallPlacements={wallPlacements}
+          imagesLibrary={assetLibraries.images}
           pendingWallImage={pendingWallImage}
           pendingWallAspect={pendingWallAspect}
           pendingImageFallbacks={pendingImageFallbacks}

@@ -22,7 +22,7 @@ export type WallPicturePlacerProps = {
   furnitureUuids?: ReadonlySet<string>;
   pendingImageSrc: string;
   textureAspect: number;
-  onPlaced: (placement: WallPicturePlacement) => void;
+  onPlaced: (placement: Omit<WallPicturePlacement, "id">) => void;
   onCancel?: () => void;
   onPlacementMissed?: () => void;
 };

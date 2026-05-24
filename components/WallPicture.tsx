@@ -3,23 +3,30 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 
-import { loadImageTextureFromSrc } from "@/lib/imageVaultTexture";
+import { loadVintageWallTextureFromSrc, libraryBlobFallbackForRef } from "@/lib/imageVaultTexture";
 import type { WallPicturePlacement } from "@/lib/wallPicturePlacement";
 
 export type WallPictureProps = {
-  placement?: WallPicturePlacement | null;
-  imageFallbacks?: string[];
+  placements?: WallPicturePlacement[];
+  imagesLibrary?: ReadonlyArray<{ id: string; src: string }>;
 };
 
-export function WallPicture({ placement, imageFallbacks = [] }: WallPictureProps) {
+export function WallPicture({
+  placements = [],
+  imagesLibrary = [],
+}: WallPictureProps) {
   return (
     <Suspense fallback={null}>
-      {placement ? (
-        <WallPictureInner
-          placement={placement}
-          imageFallbacks={imageFallbacks}
-        />
-      ) : null}
+      {placements.map((placement) => {
+        const fb = libraryBlobFallbackForRef(placement.imageSrc, imagesLibrary);
+        return (
+          <WallPictureInner
+            key={placement.id}
+            placement={placement}
+            imageFallbacks={fb ? [fb] : []}
+          />
+        );
+      })}
     </Suspense>
   );
 }
@@ -151,7 +158,7 @@ function OrnateGoldFrame({
       <mesh position={[0, 0, zPhoto - 0.002]} renderOrder={18}>
         <planeGeometry args={[width, height]} />
         <meshBasicMaterial
-          color="#f4efe4"
+          color="#7a746c"
           depthWrite={false}
           depthTest
           polygonOffset
@@ -164,7 +171,7 @@ function OrnateGoldFrame({
         <planeGeometry args={[width, height]} />
         <meshBasicMaterial
           map={texture}
-          toneMapped
+          color="#d8d2c8"
           transparent
           alphaTest={0.04}
           side={THREE.DoubleSide}
@@ -303,7 +310,7 @@ function WallPictureInner({
     let cancelled = false;
 
     void (async () => {
-      const tex = await loadImageTextureFromSrc(imageSrc, imageFallbacks);
+      const tex = await loadVintageWallTextureFromSrc(imageSrc, imageFallbacks);
       if (cancelled) {
         tex?.dispose();
         return;
