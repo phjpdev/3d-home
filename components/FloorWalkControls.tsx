@@ -5,6 +5,13 @@ import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 
 import type { DoorstepPose } from "@/lib/doorstepPose";
+import {
+  WALK_CLICK_STEP_CAP,
+  WALK_KEY_STEP,
+  WALK_KEY_TRANSIT_MS,
+  WALK_LOOK_SENSITIVITY,
+  walkClickTransitMs,
+} from "@/lib/walkCameraTuning";
 
 function hitIsUserPlacement(obj: THREE.Object3D): boolean {
   let o: THREE.Object3D | null = obj;
@@ -25,12 +32,6 @@ function pointerHitsUserPlacement(
 }
 
 const CURSOR_WALK = 'url("/walk-cursor.svg") 16 18, pointer';
-
-/** Max horizontal travel per floor click (approx. meters for typical GLBs). */
-const CLICK_STEP_CAP = 1.85;
-/** Keyboard nudge (ArrowUp / W, ArrowDown / S). */
-const KEY_STEP = 0.68;
-const KEY_TRANSIT_MS = 640;
 
 export type SurfacePolicy = {
   walkStrict: boolean;
@@ -376,8 +377,8 @@ export function FloorWalkControls({
       const dy = e.clientY - last.current.y;
       last.current = { x: e.clientX, y: e.clientY };
 
-      yaw.current -= dx * 0.0025;
-      pitch.current -= dy * 0.0025;
+      yaw.current -= dx * WALK_LOOK_SENSITIVITY;
+      pitch.current -= dy * WALK_LOOK_SENSITIVITY;
       pitch.current = THREE.MathUtils.clamp(pitch.current, -1.15, 1.15);
     };
 
@@ -432,7 +433,7 @@ export function FloorWalkControls({
       const horiz = Math.hypot(dx, dz);
       if (horiz < 1e-4) return;
 
-      const step = Math.min(horiz, CLICK_STEP_CAP);
+      const step = Math.min(horiz, WALK_CLICK_STEP_CAP);
       const flatDir = new THREE.Vector3(dx / horiz, 0, dz / horiz);
 
       const dest = new THREE.Vector3(
@@ -443,7 +444,7 @@ export function FloorWalkControls({
 
       const endYaw = Math.atan2(-flatDir.x, -flatDir.z);
 
-      tryCommitMove(dest, endYaw, Math.min(1650, 780 + step * 380));
+      tryCommitMove(dest, endYaw, walkClickTransitMs(step));
     };
 
     const onCancel = (e: PointerEvent) => {
@@ -509,10 +510,10 @@ export function FloorWalkControls({
       dir.normalize();
       if (forward === false) dir.multiplyScalar(-1);
 
-      const dest = camPos.clone().addScaledVector(dir, KEY_STEP);
+      const dest = camPos.clone().addScaledVector(dir, WALK_KEY_STEP);
       dest.y = camPos.y;
 
-      tryCommitMove(dest, yaw.current, KEY_TRANSIT_MS);
+      tryCommitMove(dest, yaw.current, WALK_KEY_TRANSIT_MS);
     };
 
     window.addEventListener("keydown", onKeyDown, { passive: false });

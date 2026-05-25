@@ -18,6 +18,11 @@ import { HouseModel } from "./HouseModel";
 import type { LibraryItem } from "@/lib/assetLibrary";
 import type { ModelPlacement } from "@/lib/modelPlacement";
 import type { WallPicturePlacement } from "@/lib/wallPicturePlacement";
+import {
+  ORBIT_DAMPING_FACTOR,
+  ORBIT_PAN_SPEED,
+  ORBIT_ROTATE_SPEED,
+} from "@/lib/walkCameraTuning";
 import { ModelPlacer } from "./ModelPlacer";
 import { ModelSelector } from "./ModelSelector";
 import { PlacedModels } from "./PlacedModels";
@@ -237,7 +242,9 @@ export default function HouseViewer({
 
         <OrbitControls
           enableDamping
-          dampingFactor={0.08}
+          dampingFactor={ORBIT_DAMPING_FACTOR}
+          rotateSpeed={ORBIT_ROTATE_SPEED}
+          panSpeed={ORBIT_PAN_SPEED}
           makeDefault
           enabled={viewMode === "overview"}
           maxPolarAngle={Math.PI * 0.495}

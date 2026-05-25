@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { useThree } from "@react-three/fiber";
 
 import { placementIdFromObject } from "@/lib/wallPicturePlacement";
+import { WALK_LOOK_SENSITIVITY } from "@/lib/walkCameraTuning";
 import type { HouseViewMode } from "./HouseViewer";
 
 const CURSOR_SELECT = "pointer";
@@ -42,8 +43,8 @@ export function WallPictureSelector({
 
   const applyWalkLook = useCallback(
     (dx: number, dy: number) => {
-      yaw.current -= dx * 0.0025;
-      pitch.current -= dy * 0.0025;
+      yaw.current -= dx * WALK_LOOK_SENSITIVITY;
+      pitch.current -= dy * WALK_LOOK_SENSITIVITY;
       pitch.current = THREE.MathUtils.clamp(pitch.current, -1.15, 1.15);
       camera.rotation.order = "YXZ";
       camera.rotation.y = yaw.current;
