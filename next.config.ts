@@ -3,6 +3,19 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   /** Bottom-left launcher (“N”) in dev — distracting over the 3D canvas */
   devIndicators: false,
+  async headers() {
+    return [
+      {
+        source: "/EinsteinHouseDone.glb",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+    ];
+  },
   /**
    * Dev tunneling (ngrok / Cloudflare Tunnel): browsers hit a public HTTPS origin while
    * `next dev` still listens on localhost. Next blocks those cross-origin `_next/` fetches

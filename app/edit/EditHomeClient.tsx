@@ -2,7 +2,7 @@
 
 import dynamicImport from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { PlacementPanelContext } from "@/components/HouseExperience";
 import HouseExperience from "@/components/HouseExperience";
 import { ModelAdjustControls } from "@/components/ModelAdjustControls";
@@ -16,6 +16,7 @@ import {
 import type { ModelPlacement } from "@/lib/modelPlacement";
 import type { WallPicturePlacement } from "@/lib/wallPicturePlacement";
 import { deleteVaultAsset, putVaultAsset } from "@/lib/assetVaultIdb";
+import { preloadHouseGlb } from "@/lib/houseGlb";
 import { viewerModelSrc } from "@/lib/modelUrl";
 
 const GlbPreview = dynamicImport(() => import("@/components/GlbPreview"), {
@@ -570,6 +571,10 @@ function EditPanel(context: PlacementPanelContext) {
 }
 
 export default function EditHomeClient() {
+  useEffect(() => {
+    preloadHouseGlb();
+  }, []);
+
   return (
     <HouseExperience siteMode="edit" placementPanel={(c) => <EditPanel {...c} />} />
   );

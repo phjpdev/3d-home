@@ -6,7 +6,8 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "optimize:house-glb": "gltf-transform optimize public/EinsteinHouseDone.glb public/EinsteinHouseDone.next.glb --compress meshopt --texture-compress webp --texture-size 1024 && node -e \"require('fs').renameSync('public/EinsteinHouseDone.next.glb','public/EinsteinHouseDone.glb')\""
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

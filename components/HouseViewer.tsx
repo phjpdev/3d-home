@@ -118,7 +118,6 @@ export default function HouseViewer({
 
   const [walkSets, setWalkSets] = useState<WalkSets | null>(null);
 
-  const [cameraReady, setCameraReady] = useState(false);
   const [loadProgress, setLoadProgress] = useState({
     active: true,
     progress: 0,
@@ -136,24 +135,6 @@ export default function HouseViewer({
     [],
   );
 
-  const handleCameraPositioned = useCallback(() => {
-    setCameraReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (viewMode !== "walk") return;
-    if (!sceneRoot || loadProgress.active) return;
-    let raf1 = 0;
-    let raf2 = 0;
-    raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => setCameraReady(true));
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-    };
-  }, [viewMode, sceneRoot, loadProgress.active]);
-
   const handleAnnotations = useCallback(
     (maps: SceneAnnotationMaps) => {
       setAnchors(new Map(maps.anchors));
@@ -170,11 +151,8 @@ export default function HouseViewer({
     onWaypointMap?.(new Map());
   }, [sceneRoot, onWaypointMap]);
 
-  const showLoadingOverlay = !(
-    sceneRoot !== null &&
-    cameraReady &&
-    !loadProgress.active
-  );
+  /** Hide once the house mesh is in the scene; camera framing can finish afterward. */
+  const showLoadingOverlay = !(sceneRoot !== null && !loadProgress.active);
 
   const pct = Math.round(loadProgress.progress);
 
@@ -218,7 +196,7 @@ export default function HouseViewer({
               Unveiling floors…
             </p>
             <p className="museum-sans mt-1 tabular-nums text-xs text-[var(--museum-muted)]">
-              {pct}%
+              {pct > 0 ? `${pct}%` : "Fetching the house model…"}
             </p>
           </div>
         </div>
@@ -338,7 +316,6 @@ export default function HouseViewer({
         {viewMode === "overview" ? (
           <DoorstepCamera
             scene={sceneRoot}
-            onPositioned={handleCameraPositioned}
             orbitRoomId={orbitRoomId}
             orbitRoomRevision={orbitRoomRevision}
           />

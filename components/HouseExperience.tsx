@@ -21,6 +21,7 @@ import {
   type HouseSiteMode,
   type LibraryItem,
 } from "@/lib/assetLibrary";
+import { preloadHouseGlb } from "@/lib/houseGlb";
 import type { SceneRegistry } from "@/lib/sceneRegistry";
 import {
   libraryBlobFallbackForRef,
@@ -243,6 +244,8 @@ export default function HouseExperience({
   }, []);
 
   useEffect(() => {
+    preloadHouseGlb();
+
     let cancel = false;
     startTransition(() => {
       setFurnitureAssignments(readStoredAssignments(siteMode));
@@ -250,35 +253,46 @@ export default function HouseExperience({
       setModelPlacementsState(readStoredModelPlacements(siteMode));
     });
 
-    void (async () => {
-      try {
-        await migrateHeavyDataUrlsToVault(siteMode);
-      } catch {
-        /* IDB unavailable */
-      }
-      const meta = readStoredAssetLibrary(siteMode);
-      try {
-        const hydrated = await hydrateAssetLibraryFromVault(meta);
-        if (!cancel) {
-          startTransition(() => {
-            setAssetLibrariesState(hydrated);
-            setWallPlacementsState(readStoredWallPlacements(siteMode));
-            setModelPlacementsState(readStoredModelPlacements(siteMode));
-          });
+    const hydrateVaultLibrary = () => {
+      void (async () => {
+        try {
+          await migrateHeavyDataUrlsToVault(siteMode);
+        } catch {
+          /* IDB unavailable */
         }
-      } catch {
-        if (!cancel) {
-          startTransition(() => {
-            setAssetLibrariesState(meta);
-            setWallPlacementsState(readStoredWallPlacements(siteMode));
-            setModelPlacementsState(readStoredModelPlacements(siteMode));
-          });
+        const meta = readStoredAssetLibrary(siteMode);
+        try {
+          const hydrated = await hydrateAssetLibraryFromVault(meta);
+          if (!cancel) {
+            startTransition(() => {
+              setAssetLibrariesState(hydrated);
+              setWallPlacementsState(readStoredWallPlacements(siteMode));
+              setModelPlacementsState(readStoredModelPlacements(siteMode));
+            });
+          }
+        } catch {
+          if (!cancel) {
+            startTransition(() => {
+              setAssetLibrariesState(meta);
+              setWallPlacementsState(readStoredWallPlacements(siteMode));
+              setModelPlacementsState(readStoredModelPlacements(siteMode));
+            });
+          }
         }
-      }
-    })();
+      })();
+    };
 
+    if (typeof requestIdleCallback === "function") {
+      const idleId = requestIdleCallback(hydrateVaultLibrary, { timeout: 2500 });
+      return () => {
+        cancel = true;
+        cancelIdleCallback(idleId);
+      };
+    }
+    const timerId = window.setTimeout(hydrateVaultLibrary, 50);
     return () => {
       cancel = true;
+      window.clearTimeout(timerId);
     };
   }, [siteMode]);
 
